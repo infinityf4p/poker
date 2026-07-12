@@ -132,6 +132,18 @@ docker compose ps
 
 Before an upgrade, read its release notes, take and verify a database backup, and determine whether the migration is reversible. To roll application code back, restore the previous image tag and run `docker compose up -d`; if a migration is not backward-compatible, follow the release-specific database restore procedure instead of starting old code against the new schema.
 
+### v0.1 to v0.2 identity migration
+
+v0.2 replaces disposable player sessions with permanent accounts, so this upgrade requires an empty Poker Infinity database. After stopping application writes and verifying a final backup, either recreate the dedicated database or reset both application-owned schemas:
+
+```sql
+DROP SCHEMA IF EXISTS public CASCADE;
+DROP SCHEMA IF EXISTS drizzle CASCADE;
+CREATE SCHEMA public;
+```
+
+Run this only against a database dedicated to Poker Infinity and only when permanent deletion was explicitly approved. Dropping `public` alone is insufficient because `drizzle.__drizzle_migrations` would retain the old migration history and cause the migration runner to skip required tables.
+
 Do not run `docker compose down --volumes` in production unless permanent database deletion is explicitly intended and a verified restore is available.
 
 ## 7. Operational checks

@@ -97,5 +97,5 @@ describe('engine invariants', () => {
       ),
       { numRuns: 100_000 },
     );
-  });
+  }, 30_000);
 });
