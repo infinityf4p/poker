@@ -68,11 +68,21 @@ export const changeUserPasswordSchema = z
     message: '新密码不能与当前密码相同',
   });
 
-export const createUserAccountSchema = z.object({
-  username: usernameSchema,
-  displayName: nicknameSchema.optional(),
-  password: userPasswordSchema,
-});
+export const createUserAccountSchema = z
+  .object({
+    username: usernameSchema,
+    displayName: nicknameSchema.optional(),
+    password: userPasswordSchema,
+  })
+  .superRefine((value, ctx) => {
+    if (!value.displayName && value.username.length > 20) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['displayName'],
+        message: '账号超过 20 位时必须填写 20 位以内的显示名称',
+      });
+    }
+  });
 
 export const resetUserPasswordSchema = z.object({ password: userPasswordSchema });
 

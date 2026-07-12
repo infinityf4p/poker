@@ -1,11 +1,14 @@
 import {
   useEffect,
+  useId,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type FormEvent,
   type ReactNode,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type {
   AdminRoomSummary,
   Card,
@@ -28,10 +31,12 @@ import {
 import { Icon, type IconName } from './icons';
 import {
   actingCopy,
+  actionChinese,
   betSuggestions,
   cardRankLabel,
   formatPoints,
   historyActions,
+  historySettlement,
   naturalAction,
   phaseLabel,
   positionLabel,
@@ -590,7 +595,11 @@ function AdminPage() {
           </div>
           <button
             className="create-button"
-            onClick={() => (tab === 'rooms' ? setCreating(true) : setCreatingAccount(true))}
+            onClick={() => {
+              setError(null);
+              if (tab === 'rooms') setCreating(true);
+              else setCreatingAccount(true);
+            }}
           >
             <Icon name="plus" size={18} /> {tab === 'rooms' ? '新建房间' : '新建账号'}
           </button>
@@ -704,16 +713,13 @@ function AdminPage() {
         <CreateAccountDialog
           onClose={() => setCreatingAccount(false)}
           onCreate={async (body) => {
-            try {
-              await api<AdminUserSummary>('/api/admin/users', {
-                method: 'POST',
-                body: JSON.stringify(body),
-              });
-              setCreatingAccount(false);
-              await loadUsers();
-            } catch (caught) {
-              setError(caught instanceof Error ? caught.message : '账号创建失败');
-            }
+            const created = await api<AdminUserSummary>('/api/admin/users', {
+              method: 'POST',
+              body: JSON.stringify(body),
+            });
+            setError(null);
+            setUsers((current) => [...current.filter((user) => user.id !== created.id), created]);
+            setCreatingAccount(false);
           }}
         />
       )}
@@ -842,25 +848,39 @@ function CreateAccountDialog({
   onCreate,
 }: {
   onClose: () => void;
-  onCreate: (body: { username: string; displayName: string; password: string }) => Promise<void>;
+  onCreate: (body: { username: string; displayName?: string; password: string }) => Promise<void>;
 }) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
   const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const normalizedUsername = username.trim();
+  const usernameValid = /^[A-Za-z0-9_.-]{3,64}$/.test(normalizedUsername);
+  const displayNameValid =
+    displayName.trim().length <= 20 &&
+    (displayName.trim().length > 0 || normalizedUsername.length <= 20);
+  const passwordValid = password.length >= 12 && password.length <= 256;
   return (
     <Modal title="创建普通玩家账号" onClose={onClose}>
       <p>玩家首次登录后必须修改临时密码，账号可加入多个好友桌。</p>
+      {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
         onSubmit={(event) => {
           event.preventDefault();
+          if (!usernameValid || !displayNameValid || !passwordValid) return;
+          setError(null);
           setPending(true);
           void onCreate({
-            username: username.trim(),
-            displayName: displayName.trim() || username.trim(),
+            username: normalizedUsername,
+            ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
             password,
-          }).finally(() => setPending(false));
+          })
+            .catch((caught) =>
+              setError(caught instanceof Error ? caught.message : '账号创建失败，请检查输入后重试'),
+            )
+            .finally(() => setPending(false));
         }}
       >
         <label className="field">
@@ -869,19 +889,39 @@ function CreateAccountDialog({
             value={username}
             onChange={(event) => setUsername(event.target.value)}
             autoComplete="off"
+            pattern="[A-Za-z0-9_.-]{3,64}"
             maxLength={64}
+            aria-describedby="create-account-username-help"
+            aria-invalid={username.length > 0 && !usernameValid}
             required
             autoFocus
           />
+          <small id="create-account-username-help" className="field-help">
+            3–64 位，仅限英文、数字、点、下划线和短横线，例如 player_1。
+          </small>
+          {username.length > 0 && !usernameValid && (
+            <small className="field-error" role="alert">
+              登录账号格式不符合要求。
+            </small>
+          )}
         </label>
         <label className="field">
           <span>显示名称</span>
           <input
             value={displayName}
             onChange={(event) => setDisplayName(event.target.value)}
-            maxLength={32}
+            maxLength={20}
             placeholder="未填写时使用账号名"
+            aria-describedby="create-account-display-help"
           />
+          <small id="create-account-display-help" className="field-help">
+            最多 20 个字符，可以使用中文；账号超过 20 位时必须填写。
+          </small>
+          {!displayNameValid && (
+            <small className="field-error" role="alert">
+              请填写不超过 20 个字符的显示名称。
+            </small>
+          )}
         </label>
         <label className="field">
           <span>临时密码</span>
@@ -891,15 +931,26 @@ function CreateAccountDialog({
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="new-password"
+            maxLength={256}
+            aria-describedby="create-account-password-help"
+            aria-invalid={password.length > 0 && !passwordValid}
             required
           />
+          <small id="create-account-password-help" className="field-help">
+            至少 12 位；当前 {password.length} 位。
+          </small>
+          {password.length > 0 && !passwordValid && (
+            <small className="field-error" role="alert">
+              临时密码至少需要 12 位。
+            </small>
+          )}
         </label>
         <p className="sheet-safety">
           <Icon name="key" size={15} /> 请通过可信渠道把临时密码单独发给玩家。
         </p>
         <button
           className="primary-button"
-          disabled={pending || username.trim().length < 3 || password.length < 12}
+          disabled={pending || !usernameValid || !displayNameValid || !passwordValid}
         >
           {pending ? '正在创建…' : '创建账号'}
         </button>
@@ -1501,6 +1552,10 @@ function RoomPage({ roomId }: { roomId: string }) {
   const [pageError, setPageError] = useState<string | null>(null);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [history, setHistory] = useState<HandHistoryItem[]>([]);
+  const [historyStatus, setHistoryStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>(
+    'idle',
+  );
+  const [historyError, setHistoryError] = useState<string | null>(null);
   const [winnerForm, setWinnerForm] = useState(false);
   const [seconds, setSeconds] = useState(0);
   const { room, me } = connection;
@@ -1527,7 +1582,31 @@ function RoomPage({ roomId }: { roomId: string }) {
     needsTurnToken = false,
   ) => {
     const ok = await connection.send(event, payload, { needsTurnToken });
-    if (ok) setNotice('操作已由服务端确认');
+    if (!ok) return;
+    if (event === 'player.ready') setNotice('已确认下一手');
+    else if (event === 'player.sitOut') setNotice('已设置下一手暂离');
+    else if (event === 'stack.topUp') setNotice('筹码已补至房间上限');
+    else if (event === 'hand.act') {
+      const action = payload.action as PlayerAction | undefined;
+      const amountTo = typeof payload.amountTo === 'number' ? payload.amountTo : undefined;
+      setNotice(
+        `${action ? (actionChinese[action] ?? '行动') : '行动'}${amountTo === undefined ? '' : ` ${formatPoints(amountTo)}`}`,
+      );
+    } else setNotice('操作已确认');
+  };
+
+  const loadHistory = async () => {
+    setHistoryOpen(true);
+    setHistoryStatus('loading');
+    setHistoryError(null);
+    try {
+      const items = await api<HandHistoryItem[]>(`/api/rooms/${roomId}/history`);
+      setHistory(items);
+      setHistoryStatus('ready');
+    } catch (caught) {
+      setHistoryStatus('error');
+      setHistoryError(caught instanceof Error ? caught.message : '无法载入牌局记录');
+    }
   };
 
   if (connection.loading) return <Loading label="正在恢复牌桌状态…" />;
@@ -1567,6 +1646,18 @@ function RoomPage({ roomId }: { roomId: string }) {
   const timerProgress = room.prompt
     ? Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds))
     : 0;
+  const actingSeat =
+    room.actingSeat === null
+      ? null
+      : enhancedRoom.seats.find((seat) => seat.seat === room.actingSeat);
+  const actingPositions = actingSeat
+    ? (positionsForRoom(enhancedRoom).get(actingSeat.seat) ?? [])
+    : [];
+  const actingAnnouncement = actingSeat?.playerId
+    ? `轮到 ${actingPositions.length ? positionLabel(actingPositions) : `座位 ${actingSeat.seat + 1}`}，${actingSeat.nickname ?? '玩家'}`
+    : room.status === 'ACTIVE'
+      ? '等待下一位玩家行动'
+      : '等待下一手确认';
 
   return (
     <main
@@ -1593,16 +1684,10 @@ function RoomPage({ roomId }: { roomId: string }) {
         <button
           className="round-button header-history"
           aria-label="查看牌局记录"
+          aria-busy={historyStatus === 'loading'}
           onClick={() => {
-            api<HandHistoryItem[]>(`/api/rooms/${roomId}/history`)
-              .then((items) => {
-                setHistory(items);
-                setHistoryOpen(true);
-                setPageError(null);
-              })
-              .catch((caught) =>
-                setPageError(caught instanceof Error ? caught.message : '无法载入牌局记录'),
-              );
+            if (historyStatus === 'loading') setHistoryOpen(true);
+            else void loadHistory();
           }}
         >
           <Icon name="history" size={19} />
@@ -1612,13 +1697,19 @@ function RoomPage({ roomId }: { roomId: string }) {
       <div
         className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}
         style={{ '--progress': timerProgress } as CSSProperties}
-        aria-live="polite"
       >
+        <span className="sr-only" aria-live="polite">
+          {actingAnnouncement}
+        </span>
         <span className="turn-ring">
           <Icon name="clock" size={17} />
         </span>
         <strong>{actingCopy(enhancedRoom, seconds)}</strong>
-        {room.phase && <small>{phaseLabel[room.phase] ?? room.phase}</small>}
+        {room.phase && (
+          <small role="timer">
+            {phaseLabel[room.phase] ?? room.phase} · {seconds} 秒
+          </small>
+        )}
       </div>
       {(connection.error || pageError || notice) && (
         <div className="table-notice-wrap">
@@ -1627,7 +1718,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           )}
           {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
           {notice && (
-            <div className="success-box" onAnimationEnd={() => setNotice(null)}>
+            <div className="success-box" role="status" onAnimationEnd={() => setNotice(null)}>
               {notice}
             </div>
           )}
@@ -1743,7 +1834,14 @@ function RoomPage({ roomId }: { roomId: string }) {
         />
       )}
       {historyOpen && (
-        <HistoryDialog items={history} room={enhancedRoom} onClose={() => setHistoryOpen(false)} />
+        <HistoryDialog
+          items={history}
+          room={enhancedRoom}
+          status={historyStatus}
+          error={historyError}
+          onRetry={() => void loadHistory()}
+          onClose={() => setHistoryOpen(false)}
+        />
       )}
       {me && room.prompt && isMyTurn && (
         <MobileActionDock
@@ -1949,8 +2047,8 @@ function OnlineActions({
 }) {
   const prompt = room.prompt;
   const minimum = prompt?.minRaiseTo ?? prompt?.minBetTo ?? 0;
-  const [amount, setAmount] = useState(minimum);
-  useEffect(() => setAmount(minimum), [minimum, room.serverSeq]);
+  const [amountInput, setAmountInput] = useState(String(minimum));
+  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
   if (room.status !== 'ACTIVE')
     return (
       <WaitingPanel
@@ -1974,7 +2072,12 @@ function OnlineActions({
       ? 'BET_TO'
       : null;
   const suggestions = betSuggestions(room, heroSeat);
-  const amountValid = Number.isInteger(amount) && amount >= minimum && amount <= prompt.maxTo;
+  const amount = Number(amountInput);
+  const amountValid =
+    amountInput.trim() !== '' &&
+    Number.isInteger(amount) &&
+    amount >= minimum &&
+    amount <= prompt.maxTo;
   return (
     <section className="operation-panel online-panel">
       <div className="operation-head">
@@ -2003,7 +2106,7 @@ function OnlineActions({
         <div className="raise-control">
           <div>
             <label htmlFor="raise">
-              {wagerAction === 'BET_TO' ? '下注至 amountTo' : '加注至 amountTo'}
+              {wagerAction === 'BET_TO' ? '下注到' : '加注到'}（本轮总投入）
             </label>
             <label className="amount-input">
               <Icon name="chip" size={15} />
@@ -2012,9 +2115,12 @@ function OnlineActions({
                 min={minimum}
                 max={prompt.maxTo}
                 step="1"
-                value={amount}
-                onChange={(event) => setAmount(Number(event.target.value))}
+                inputMode="numeric"
+                value={amountInput}
+                onChange={(event) => setAmountInput(event.target.value)}
                 aria-label="精确输入下注后总投入"
+                aria-invalid={!amountValid}
+                aria-describedby="desktop-wager-help"
               />
             </label>
           </div>
@@ -2023,8 +2129,9 @@ function OnlineActions({
               <button
                 type="button"
                 className={amount === suggestion.amountTo ? 'active' : ''}
+                aria-pressed={amount === suggestion.amountTo}
                 key={`${suggestion.semantic}-${suggestion.amountTo}`}
-                onClick={() => setAmount(suggestion.amountTo)}
+                onClick={() => setAmountInput(String(suggestion.amountTo))}
               >
                 <strong>{suggestion.label}</strong>
                 <small>{formatPoints(suggestion.amountTo)}</small>
@@ -2037,13 +2144,22 @@ function OnlineActions({
             min={minimum}
             max={prompt.maxTo}
             step={room.settings.smallBlind}
-            value={Math.min(Math.max(amount, minimum), prompt.maxTo)}
-            onChange={(event) => setAmount(+event.target.value)}
+            value={amountValid ? amount : minimum}
+            onChange={(event) => setAmountInput(event.target.value)}
           />
           <div className="range-bounds">
             <span>最小 {formatPoints(minimum)}</span>
             <span>最大 {formatPoints(prompt.maxTo)}</span>
           </div>
+          <small
+            id="desktop-wager-help"
+            className={amountValid ? 'field-help' : 'field-error'}
+            role={amountValid ? undefined : 'alert'}
+          >
+            {amountValid
+              ? '这里填写本轮累计投入，不是本次额外增加的筹码。'
+              : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
+          </small>
         </div>
       )}
       <div className="poker-actions real-poker-actions">
@@ -2068,7 +2184,8 @@ function OnlineActions({
             disabled={!amountValid}
             onClick={() => onAction(wagerAction, amount)}
           >
-            {wagerAction === 'BET_TO' ? '下注至' : '加注至'} {formatPoints(amount)}
+            {wagerAction === 'BET_TO' ? '下注到' : '加注到'}{' '}
+            {amountValid ? formatPoints(amount) : '—'}
           </button>
         )}
         {actions.has('ALL_IN') && (
@@ -2214,12 +2331,17 @@ function MobileActionDock({
       : null;
   const minimum = prompt.minRaiseTo ?? prompt.minBetTo ?? 0;
   const [raiseOpen, setRaiseOpen] = useState(false);
-  const [amount, setAmount] = useState(minimum);
-  useEffect(() => setAmount(minimum), [minimum, room.serverSeq]);
-  const valid = Number.isInteger(amount) && amount >= minimum && amount <= prompt.maxTo;
+  const [amountInput, setAmountInput] = useState(String(minimum));
+  useEffect(() => setAmountInput(String(minimum)), [minimum, room.serverSeq]);
+  const amount = Number(amountInput);
+  const valid =
+    amountInput.trim() !== '' &&
+    Number.isInteger(amount) &&
+    amount >= minimum &&
+    amount <= prompt.maxTo;
   return (
     <>
-      <div className="mobile-action-dock" aria-label="行动操作区">
+      <div className="mobile-action-dock" role="group" aria-label="行动操作区" aria-busy={busy}>
         <div className="mobile-turn-copy">
           <span>轮到你 · {seconds} 秒</span>
           <small>
@@ -2255,14 +2377,19 @@ function MobileActionDock({
           )}
           {wagerAction && (
             <button disabled={busy} className="raise-button" onClick={() => setRaiseOpen(true)}>
-              加注
+              {wagerAction === 'BET_TO' ? '下注' : '加注'}
+            </button>
+          )}
+          {!wagerAction && actions.has('ALL_IN') && (
+            <button disabled={busy} className="allin-button" onClick={() => onAction('ALL_IN')}>
+              全下 {formatPoints(prompt.maxTo)}
             </button>
           )}
         </div>
       </div>
       {raiseOpen && wagerAction && (
         <Modal
-          title={wagerAction === 'BET_TO' ? '下注至 amountTo' : '加注至 amountTo'}
+          title={wagerAction === 'BET_TO' ? '下注到（本轮总投入）' : '加注到（本轮总投入）'}
           onClose={() => setRaiseOpen(false)}
         >
           <div className="mobile-wager-sheet">
@@ -2273,9 +2400,12 @@ function MobileActionDock({
                 min={minimum}
                 max={prompt.maxTo}
                 step="1"
-                value={amount}
-                onChange={(event) => setAmount(Number(event.target.value))}
+                inputMode="numeric"
+                value={amountInput}
+                onChange={(event) => setAmountInput(event.target.value)}
                 aria-label="精确输入下注后总投入"
+                aria-invalid={!valid}
+                aria-describedby="mobile-wager-help"
               />
             </label>
             <div className="bet-suggestions">
@@ -2283,8 +2413,9 @@ function MobileActionDock({
                 <button
                   type="button"
                   className={amount === suggestion.amountTo ? 'active' : ''}
+                  aria-pressed={amount === suggestion.amountTo}
                   key={`${suggestion.semantic}-${suggestion.amountTo}`}
-                  onClick={() => setAmount(suggestion.amountTo)}
+                  onClick={() => setAmountInput(String(suggestion.amountTo))}
                 >
                   <strong>{suggestion.label}</strong>
                   <small>{formatPoints(suggestion.amountTo)}</small>
@@ -2296,13 +2427,22 @@ function MobileActionDock({
               min={minimum}
               max={prompt.maxTo}
               step={room.settings.smallBlind}
-              value={Math.min(Math.max(amount, minimum), prompt.maxTo)}
-              onChange={(event) => setAmount(Number(event.target.value))}
+              value={valid ? amount : minimum}
+              onChange={(event) => setAmountInput(event.target.value)}
             />
             <div className="range-bounds">
               <span>最小 {formatPoints(minimum)}</span>
               <span>最大 {formatPoints(prompt.maxTo)}</span>
             </div>
+            <small
+              id="mobile-wager-help"
+              className={valid ? 'field-help' : 'field-error'}
+              role={valid ? undefined : 'alert'}
+            >
+              {valid
+                ? '金额表示本轮累计投入。'
+                : `请输入 ${formatPoints(minimum)} 至 ${formatPoints(prompt.maxTo)} 之间的整数。`}
+            </small>
             <button
               className="primary-button"
               disabled={!valid || busy}
@@ -2311,7 +2451,7 @@ function MobileActionDock({
                 setRaiseOpen(false);
               }}
             >
-              {wagerAction === 'BET_TO' ? '下注至' : '加注至'} {formatPoints(amount)}
+              {wagerAction === 'BET_TO' ? '下注到' : '加注到'} {valid ? formatPoints(amount) : '—'}
             </button>
             {actions.has('ALL_IN') && (
               <button
@@ -2527,12 +2667,20 @@ function LiveWinnerDialog({
 function HistoryDialog({
   items,
   room,
+  status,
+  error,
+  onRetry,
   onClose,
 }: {
   items: HandHistoryItem[];
   room: EnhancedRoomProjection;
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  error: string | null;
+  onRetry: () => void;
   onClose: () => void;
 }) {
+  const [expandedHandId, setExpandedHandId] = useState<string | null>(null);
+  const [visibleCount, setVisibleCount] = useState(20);
   const nameMap = useMemo(
     () =>
       new Map(
@@ -2542,6 +2690,10 @@ function HistoryDialog({
       ),
     [room.seats],
   );
+  useEffect(() => {
+    setExpandedHandId(items[0]?.handId ?? null);
+    setVisibleCount(20);
+  }, [items]);
   const positionsBySeat = positionsForRoom(room);
   const positionMap = new Map(
     room.seats
@@ -2549,55 +2701,209 @@ function HistoryDialog({
       .map((seat) => [seat.playerId!, positionsBySeat.get(seat.seat) ?? []]),
   );
   const streetOrder = ['PREFLOP', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN'] as const;
+  const visibleItems = items.slice(0, visibleCount);
   return (
-    <Modal title="最近牌局记录" onClose={onClose}>
-      <div className="history-list">
-        {items.map((hand) => {
-          const actions = historyActions(hand, nameMap, positionMap);
-          return (
-            <article key={hand.handId} className="history-hand">
-              <header>
-                <span>
-                  <strong>第 {hand.handNumber} 手</strong>
-                  <small>
-                    {new Date(hand.startedAt).toLocaleString()} ·{' '}
-                    {hand.endedAt ? '已结算' : '进行中'}
-                  </small>
-                </span>
-                <ModeBadge mode={hand.mode} />
-              </header>
-              <div className="history-streets">
-                {streetOrder.map((street) => {
-                  const streetActions = actions.filter((action) => action.street === street);
-                  if (!streetActions.length) return null;
-                  return (
-                    <section key={street}>
-                      <h3>{phaseLabel[street]}</h3>
-                      <ol>
-                        {streetActions.map((action, index) => (
-                          <li key={`${action.seq}-${index}`}>
-                            <span
-                              className={`history-action-dot history-action-dot--${action.action.toLowerCase()}`}
-                            />
-                            <span>{naturalAction(action)}</span>
-                            {action.stackAfter !== undefined && (
-                              <small>余 {formatPoints(action.stackAfter)}</small>
-                            )}
-                          </li>
-                        ))}
-                      </ol>
-                    </section>
-                  );
-                })}
-                {actions.length === 0 && <p className="empty-state">本手没有可展示的公开行动。</p>}
-              </div>
-            </article>
-          );
-        })}
-        {items.length === 0 && <p className="empty-state">还没有已记录的手牌。</p>}
+    <Modal title="最近牌局记录" className="history-modal" onClose={onClose}>
+      <div className="history-intro">
+        <span>
+          <Icon name="history" size={17} /> 最近 {items.length} 手
+        </span>
+        <small>点击任意一手查看逐街行动与结算</small>
       </div>
+      {status === 'loading' && (
+        <div className="history-state" role="status">
+          <span className="loader" />
+          <strong>正在整理牌局记录</strong>
+          <small>结算、底池和逐街行动会一起载入。</small>
+        </div>
+      )}
+      {status === 'error' && (
+        <div className="history-state history-state--error">
+          <ErrorBox>{error ?? '无法载入牌局记录'}</ErrorBox>
+          <button className="secondary-button" onClick={onRetry}>
+            <Icon name="refresh" size={16} /> 重新载入
+          </button>
+        </div>
+      )}
+      <div className="history-list">
+        {status === 'ready' &&
+          visibleItems.map((hand) => {
+            const actions = historyActions(hand, nameMap, positionMap);
+            const historicalNames = new Map(nameMap);
+            for (const action of actions) {
+              if (action.playerId) historicalNames.set(action.playerId, action.nickname);
+            }
+            const settlement = historySettlement(hand.result);
+            const winners = settlement?.payouts ?? [];
+            const winnerCopy = winners.length
+              ? winners
+                  .map((winner) => historicalNames.get(winner.playerId) ?? '玩家')
+                  .slice(0, 2)
+                  .join('、')
+              : hand.endedAt
+                ? '已结算'
+                : '进行中';
+            const reasonCopy =
+              settlement?.reason === 'UNCONTESTED'
+                ? '其余玩家弃牌'
+                : settlement?.reason === 'SHOWDOWN'
+                  ? '线上摊牌'
+                  : settlement?.reason === 'LIVE_CONFIRMED'
+                    ? '现场结果确认'
+                    : hand.endedAt
+                      ? '结算完成'
+                      : '牌局进行中';
+            const expanded = expandedHandId === hand.handId;
+            return (
+              <article key={hand.handId} className={`history-hand ${expanded ? 'expanded' : ''}`}>
+                <button
+                  type="button"
+                  className="history-hand__summary"
+                  aria-expanded={expanded}
+                  onClick={() => setExpandedHandId(expanded ? null : hand.handId)}
+                >
+                  <span className="history-hand__number">
+                    <b>#{hand.handNumber}</b>
+                    <time dateTime={hand.startedAt}>
+                      {new Date(hand.startedAt).toLocaleString('zh-CN', {
+                        month: 'numeric',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })}
+                    </time>
+                  </span>
+                  <span className="history-hand__outcome">
+                    <strong>{winnerCopy}</strong>
+                    <small>
+                      {reasonCopy}
+                      {settlement?.totalPot ? ` · 底池 ${formatPoints(settlement.totalPot)}` : ''}
+                    </small>
+                  </span>
+                  <ModeBadge mode={hand.mode} />
+                  <Icon name="chevron" size={17} className="history-chevron" />
+                </button>
+                {expanded && (
+                  <div className="history-hand__detail">
+                    {settlement && (
+                      <section className="history-result" aria-label="本手结算">
+                        <header>
+                          <span>
+                            <Icon name="crown" size={18} /> 结算结果
+                          </span>
+                          <strong>{formatPoints(settlement.totalPot)} 筹码</strong>
+                        </header>
+                        {settlement.communityCards.length > 0 && (
+                          <div className="history-board" aria-label="公共牌">
+                            {settlement.communityCards.map((card, index) => (
+                              <PlayingCard card={card} compact dealIndex={index} key={card} />
+                            ))}
+                          </div>
+                        )}
+                        <ul className="history-payouts">
+                          {settlement.payouts.map((payout) => (
+                            <li key={payout.playerId}>
+                              <span className="mini-avatar">
+                                {(historicalNames.get(payout.playerId) ?? '玩').slice(0, 1)}
+                              </span>
+                              <span>
+                                <strong>{historicalNames.get(payout.playerId) ?? '玩家'}</strong>
+                                <small>
+                                  {payout.potIndexes
+                                    .map((pot) => (pot === 0 ? '主池' : `边池 ${pot}`))
+                                    .join('、')}
+                                </small>
+                              </span>
+                              <b>+{formatPoints(payout.amount)}</b>
+                            </li>
+                          ))}
+                          {settlement.refunds.map((refund) => (
+                            <li key={`refund-${refund.playerId}`} className="refund">
+                              <span className="mini-avatar">
+                                {(historicalNames.get(refund.playerId) ?? '玩').slice(0, 1)}
+                              </span>
+                              <span>
+                                <strong>{historicalNames.get(refund.playerId) ?? '玩家'}</strong>
+                                <small>未被跟注部分退回</small>
+                              </span>
+                              <b>+{formatPoints(refund.amount)}</b>
+                            </li>
+                          ))}
+                        </ul>
+                      </section>
+                    )}
+                    <div className="history-streets">
+                      {streetOrder.map((street) => {
+                        const streetActions = actions.filter((action) => action.street === street);
+                        if (!streetActions.length) return null;
+                        return (
+                          <section key={street}>
+                            <h4>{phaseLabel[street]}</h4>
+                            <ol>
+                              {streetActions.map((action, index) => (
+                                <li key={`${action.seq}-${index}`}>
+                                  <span
+                                    aria-hidden="true"
+                                    className={`history-action-dot history-action-dot--${action.action.toLowerCase()}`}
+                                  />
+                                  <span className="history-action__copy">
+                                    {naturalAction(action)}
+                                  </span>
+                                  {action.stackAfter !== undefined && (
+                                    <small>余 {formatPoints(action.stackAfter)}</small>
+                                  )}
+                                </li>
+                              ))}
+                            </ol>
+                          </section>
+                        );
+                      })}
+                      {actions.length === 0 && (
+                        <p className="empty-state">本手没有可展示的公开行动。</p>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </article>
+            );
+          })}
+        {status === 'ready' && items.length === 0 && (
+          <div className="history-state">
+            <Icon name="cards" size={30} />
+            <strong>还没有已结算的手牌</strong>
+            <small>完成第一手后，这里会展示赢家、底池和每次下注。</small>
+          </div>
+        )}
+      </div>
+      {status === 'ready' && visibleCount < items.length && (
+        <button
+          type="button"
+          className="secondary-button history-load-more"
+          onClick={() => setVisibleCount((count) => Math.min(items.length, count + 20))}
+        >
+          再显示 {Math.min(20, items.length - visibleCount)} 手
+        </button>
+      )}
     </Modal>
   );
+}
+
+let bodyScrollLockCount = 0;
+let bodyOverflowBeforeModal = '';
+
+function lockBodyScroll(): () => void {
+  if (bodyScrollLockCount === 0) {
+    bodyOverflowBeforeModal = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+  }
+  bodyScrollLockCount += 1;
+  return () => {
+    bodyScrollLockCount = Math.max(0, bodyScrollLockCount - 1);
+    if (bodyScrollLockCount === 0) {
+      document.body.style.overflow = bodyOverflowBeforeModal;
+      bodyOverflowBeforeModal = '';
+    }
+  };
 }
 
 function Modal({
@@ -2605,24 +2911,85 @@ function Modal({
   children,
   onClose,
   locked = false,
+  className = '',
 }: {
   title: string;
   children: ReactNode;
   onClose?: () => void;
   locked?: boolean;
+  className?: string;
 }) {
-  return (
-    <div className="sheet-backdrop" onMouseDown={locked ? undefined : onClose}>
+  const titleId = useId();
+  const dialogRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previousFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const unlockBodyScroll = lockBodyScroll();
+    const frame = window.requestAnimationFrame(() => {
+      const activeElement =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      const firstControl = dialogRef.current?.querySelector<HTMLElement>(
+        'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled])',
+      );
+      if (!activeElement || !dialogRef.current?.contains(activeElement)) {
+        (firstControl ?? dialogRef.current)?.focus();
+      }
+    });
+    return () => {
+      window.cancelAnimationFrame(frame);
+      unlockBodyScroll();
+      previousFocus?.focus();
+    };
+  }, []);
+
+  const dialog = (
+    <div
+      className="sheet-backdrop"
+      onMouseDown={(event) => {
+        if (!locked && onClose && event.target === event.currentTarget) onClose();
+      }}
+    >
       <section
-        className="bottom-sheet real-modal"
+        ref={dialogRef}
+        className={`bottom-sheet real-modal ${className}`.trim()}
         role="dialog"
         aria-modal="true"
-        onMouseDown={(event) => event.stopPropagation()}
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape' && !locked && onClose) {
+            event.preventDefault();
+            onClose();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+          const controls = Array.from(
+            dialogRef.current?.querySelectorAll<HTMLElement>(
+              'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ) ?? [],
+          ).filter((control) => control.offsetParent !== null);
+          if (!controls.length) return;
+          const first = controls[0]!;
+          const last = controls[controls.length - 1]!;
+          if (event.shiftKey && document.activeElement === first) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && document.activeElement === last) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
       >
+        <div className="sheet-handle" aria-hidden="true" />
         <header>
-          <h2>{title}</h2>
+          <h2 id={titleId}>{title}</h2>
           {!locked && onClose && (
-            <button className="round-button" onClick={onClose}>
+            <button
+              type="button"
+              className="round-button"
+              onClick={onClose}
+              aria-label={`关闭${title}`}
+            >
               <Icon name="close" size={18} />
             </button>
           )}
@@ -2631,6 +2998,7 @@ function Modal({
       </section>
     </div>
   );
+  return createPortal(dialog, document.body);
 }
 
 export default App;

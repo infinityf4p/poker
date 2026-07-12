@@ -1,5 +1,13 @@
-const CACHE_NAME = 'friends-table-shell-v1';
+const CACHE_NAME = 'friends-table-shell-v2';
 const SHELL = ['/', '/index.html', '/manifest.webmanifest', '/icon.svg'];
+
+function isCacheableResponse(request, response) {
+  if (!response.ok) return false;
+  const contentType = response.headers.get('content-type') || '';
+  if (request.destination === 'script') return contentType.includes('javascript');
+  if (request.destination === 'style') return contentType.includes('text/css');
+  return true;
+}
 
 self.addEventListener('install', (event) => {
   event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(SHELL)));
@@ -8,24 +16,50 @@ self.addEventListener('install', (event) => {
 
 self.addEventListener('activate', (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) =>
-        Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
-      ),
+    Promise.all([
+      caches
+        .keys()
+        .then((keys) =>
+          Promise.all(keys.filter((key) => key !== CACHE_NAME).map((key) => caches.delete(key))),
+        ),
+      self.clients.claim(),
+    ]),
   );
-  self.clients.claim();
 });
 
 self.addEventListener('fetch', (event) => {
-  if (event.request.method !== 'GET' || new URL(event.request.url).origin !== self.location.origin)
+  const url = new URL(event.request.url);
+  if (event.request.method !== 'GET' || url.origin !== self.location.origin) return;
+  if (
+    url.pathname.startsWith('/api/') ||
+    url.pathname.startsWith('/socket.io/') ||
+    url.pathname.startsWith('/health/')
+  ) {
     return;
+  }
+
+  const isNavigation = event.request.mode === 'navigate';
+  const isStaticAsset =
+    url.pathname === '/' ||
+    url.pathname === '/index.html' ||
+    url.pathname === '/manifest.webmanifest' ||
+    url.pathname === '/icon.svg' ||
+    url.pathname.startsWith('/assets/');
+  if (!isNavigation && !isStaticAsset) return;
 
   event.respondWith(
     fetch(event.request)
       .then((response) => {
-        const copy = response.clone();
-        caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+        if (isCacheableResponse(event.request, response)) {
+          const copy = response.clone();
+          const cacheKey = isNavigation ? '/index.html' : event.request;
+          event.waitUntil(
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(cacheKey, copy))
+              .catch(() => undefined),
+          );
+        }
         return response;
       })
       .catch(async () => {

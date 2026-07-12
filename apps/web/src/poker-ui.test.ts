@@ -1,6 +1,12 @@
 import type { Card, HandHistoryItem, PublicRoomProjection, PublicSeat } from '@poker/protocol';
 import { describe, expect, it } from 'vitest';
-import { betSuggestions, cardRankLabel, historyActions, naturalAction } from './poker-ui';
+import {
+  betSuggestions,
+  cardRankLabel,
+  historyActions,
+  historySettlement,
+  naturalAction,
+} from './poker-ui';
 
 function seat(seatNumber: number, overrides: Partial<PublicSeat> = {}): PublicSeat {
   return {
@@ -145,6 +151,48 @@ describe('poker UI helpers', () => {
     const actions = historyActions(hand, new Map([['p1', '现在的名字']]));
     expect(actions).toHaveLength(2);
     expect(actions[0]).toMatchObject({ nickname: '当时的小明', positions: ['BTN', 'SB'] });
-    expect(naturalAction(actions[1]!)).toBe('BTN/SB 当时的小明 弃牌');
+    expect(naturalAction(actions[1]!)).toBe('BTN 按钮位 / SB 小盲 · 当时的小明 弃牌');
+    expect(
+      naturalAction({
+        seq: 3,
+        street: 'PREFLOP',
+        playerId: 'p1',
+        nickname: '当时的小明',
+        positions: ['BTN'],
+        action: 'RAISE_TO',
+        amount: 40,
+        amountTo: 40,
+      }),
+    ).toBe('BTN 按钮位 · 当时的小明 加注到 40');
+  });
+
+  it('summarizes winners, side pots, refunds, and the board for history cards', () => {
+    expect(
+      historySettlement({
+        reason: 'SHOWDOWN',
+        communityCards: ['As', 'Kh', 'Td', '2c', '3s'],
+        awards: [
+          {
+            potIndex: 0,
+            amount: 300,
+            shares: [
+              { playerId: 'p1', amount: 150 },
+              { playerId: 'p2', amount: 150 },
+            ],
+          },
+          { potIndex: 1, amount: 100, shares: [{ playerId: 'p1', amount: 100 }] },
+        ],
+        refunds: [{ playerId: 'p3', amount: 40 }],
+      }),
+    ).toEqual({
+      reason: 'SHOWDOWN',
+      communityCards: ['As', 'Kh', 'Td', '2c', '3s'],
+      totalPot: 400,
+      payouts: [
+        { playerId: 'p1', amount: 250, potIndexes: [0, 1] },
+        { playerId: 'p2', amount: 150, potIndexes: [0] },
+      ],
+      refunds: [{ playerId: 'p3', amount: 40 }],
+    });
   });
 });

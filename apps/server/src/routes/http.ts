@@ -25,6 +25,22 @@ interface HttpDependencies {
   rooms: RoomManager;
 }
 
+interface ValidationIssue {
+  message: string;
+}
+
+export function validationErrorBody(issues: readonly ValidationIssue[]) {
+  return {
+    error: 'BAD_REQUEST' as const,
+    message: issues[0]?.message ?? '请求参数无效',
+    issues,
+  };
+}
+
+function sendValidationError(reply: FastifyReply, issues: readonly ValidationIssue[]) {
+  return reply.code(400).send(validationErrorBody(issues));
+}
+
 async function requireAdmin(
   request: FastifyRequest,
   reply: FastifyReply,
@@ -84,8 +100,7 @@ export async function registerHttpRoutes(
     { config: { rateLimit: { max: 8, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const parsed = userLoginSchema.safeParse(request.body);
-      if (!parsed.success)
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
       const user = await repository.verifyUser(parsed.data.username, parsed.data.password);
       if (!user) {
         return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
@@ -111,8 +126,7 @@ export async function registerHttpRoutes(
     const user = await requireUser(request, reply, repository, true);
     if (!user) return;
     const parsed = changeUserPasswordSchema.safeParse(request.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     const changed = await repository.changeUserPassword(
       user.id,
       parsed.data.currentPassword,
@@ -136,8 +150,7 @@ export async function registerHttpRoutes(
     { config: { rateLimit: { max: 5, timeWindow: '1 minute' } } },
     async (request, reply) => {
       const parsed = adminLoginSchema.safeParse(request.body);
-      if (!parsed.success)
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
       const admin = await repository.verifyAdmin(parsed.data.username, parsed.data.password);
       if (!admin)
         return reply.code(401).send({ error: 'INVALID_CREDENTIALS', message: '账号或密码错误' });
@@ -167,13 +180,18 @@ export async function registerHttpRoutes(
     const admin = await requireAdmin(request, reply, repository);
     if (!admin) return;
     const parsed = createUserAccountSchema.safeParse(request.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
       return reply.code(201).send(await repository.createUserAccount(admin.id, parsed.data));
     } catch (error) {
       if (error instanceof Error && error.message === 'USERNAME_TAKEN') {
         return reply.code(409).send({ error: 'USERNAME_TAKEN', message: '账号已存在' });
+      }
+      if (error instanceof Error && error.message === 'INVALID_DISPLAY_NAME') {
+        return reply.code(400).send({
+          error: 'BAD_REQUEST',
+          message: '账号超过 20 位时必须填写 20 位以内的显示名称',
+        });
       }
       throw error;
     }
@@ -185,8 +203,7 @@ export async function registerHttpRoutes(
       const admin = await requireAdmin(request, reply, repository);
       if (!admin) return;
       const parsed = resetUserPasswordSchema.safeParse(request.body);
-      if (!parsed.success)
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
       if (
         !(await repository.resetUserPassword(admin.id, request.params.id, parsed.data.password))
       ) {
@@ -226,7 +243,7 @@ export async function registerHttpRoutes(
       if (!admin) return;
       const parsed = adminAdjustStackSchema.safeParse(request.body);
       if (!parsed.success) {
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+        return sendValidationError(reply, parsed.error.issues);
       }
       try {
         const result = await rooms.adminAdjustStack(
@@ -259,7 +276,7 @@ export async function registerHttpRoutes(
       if (!admin) return;
       const parsed = adminKickPlayerSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+        return sendValidationError(reply, parsed.error.issues);
       }
       try {
         const result = await rooms.adminKickPlayer(
@@ -291,7 +308,7 @@ export async function registerHttpRoutes(
       if (!admin) return;
       const parsed = adminRestorePlayerSchema.safeParse(request.body ?? {});
       if (!parsed.success) {
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+        return sendValidationError(reply, parsed.error.issues);
       }
       try {
         const result = await rooms.adminReinstatePlayer(
@@ -319,8 +336,7 @@ export async function registerHttpRoutes(
     const admin = await requireAdmin(request, reply, repository);
     if (!admin) return;
     const parsed = addRoomMemberSchema.safeParse(request.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
       const membership = await repository.addUserToRoom(
         request.params.id,
@@ -359,8 +375,7 @@ export async function registerHttpRoutes(
       const admin = await requireAdmin(request, reply, repository);
       if (!admin) return;
       const parsed = adminPlayAsSelfSchema.safeParse(request.body ?? {});
-      if (!parsed.success)
-        return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+      if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
       const user = await repository.ensureAdminPlayerAccount(admin);
       try {
         const membership = await repository.addUserToRoom(
@@ -396,8 +411,7 @@ export async function registerHttpRoutes(
     const admin = await requireAdmin(request, reply, repository);
     if (!admin) return;
     const parsed = createRoomSchema.safeParse(request.body);
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     const created = await repository.createRoom(admin, parsed.data.name, parsed.data.settings);
     return reply.code(201).send({
       roomId: created.roomId,
@@ -451,8 +465,7 @@ export async function registerHttpRoutes(
     const user = await requireUser(request, reply, repository);
     if (!user) return;
     const parsed = joinRoomSchema.safeParse(request.body ?? {});
-    if (!parsed.success)
-      return reply.code(400).send({ error: 'BAD_REQUEST', issues: parsed.error.issues });
+    if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
     try {
       const joined = await repository.joinByInvite(
         request.params.token,

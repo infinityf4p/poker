@@ -337,6 +337,14 @@ export class PokerRepository {
     input: { username: string; displayName?: string | undefined; password: string },
   ): Promise<AdminUserSummary> {
     const username = normalizeUsername(input.username);
+    const displayName = input.displayName?.trim() || input.username.trim();
+    if (
+      displayName.length === 0 ||
+      displayName.length > 20 ||
+      /[\u0000-\u001f\u007f-\u009f]/u.test(displayName)
+    ) {
+      throw new Error('INVALID_DISPLAY_NAME');
+    }
     const passwordHash = await argon2.hash(input.password, USER_PASSWORD_OPTIONS);
     try {
       const [created] = await this.db.transaction(async (tx) => {
@@ -344,13 +352,15 @@ export class PokerRepository {
           .insert(userAccounts)
           .values({
             username,
-            displayName: input.displayName?.trim() || input.username.trim(),
+            displayName,
             passwordHash,
             mustChangePassword: true,
             createdByAdminId: adminId,
           })
+          .onConflictDoNothing({ target: userAccounts.username })
           .returning();
         const account = rows[0];
+        if (!account) throw new Error('USERNAME_TAKEN');
         if (account) {
           await tx.insert(auditLogs).values({
             adminId,
@@ -360,7 +370,7 @@ export class PokerRepository {
         }
         return rows;
       });
-      if (!created) throw new Error('Failed to create user account');
+      if (!created) throw new Error('USERNAME_TAKEN');
       return {
         ...userSession(created),
         loginEnabled: created.loginEnabled,

@@ -42,6 +42,48 @@ jobs:
       - name: Build
         run: pnpm build
 
+  e2e:
+    name: Real PostgreSQL and Socket.IO table flow
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: poker
+          POSTGRES_PASSWORD: poker
+          POSTGRES_DB: poker
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=poker --dbname=poker"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://poker:poker@127.0.0.1:5432/poker
+      E2E_DATABASE_URL: postgres://poker:poker@127.0.0.1:5432/poker
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10.13.1
+          run_install: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+      - name: Apply database migrations
+        run: pnpm db:migrate
+      - name: Run real table flow
+        run: pnpm test:e2e
+
   compose:
     name: Validate Compose
     runs-on: ubuntu-latest

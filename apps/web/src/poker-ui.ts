@@ -25,6 +25,7 @@ export interface TableActionItem {
   amount?: number;
   amountTo?: number;
   stackAfter?: number;
+  cards?: Card[];
   createdAt?: string;
   timedOut?: boolean;
 }
@@ -38,6 +39,25 @@ export interface BetSuggestion {
   detail: string;
   amountTo: number;
   semantic: 'OPEN' | 'THREE_BET' | 'FOUR_BET' | 'POT_FRACTION' | 'MINIMUM';
+}
+
+export interface HistoryPayoutItem {
+  playerId: string;
+  amount: number;
+  potIndexes: number[];
+}
+
+export interface HistoryRefundItem {
+  playerId: string;
+  amount: number;
+}
+
+export interface HistorySettlementSummary {
+  reason: 'UNCONTESTED' | 'SHOWDOWN' | 'LIVE_CONFIRMED' | 'UNKNOWN';
+  communityCards: Card[];
+  totalPot: number;
+  payouts: HistoryPayoutItem[];
+  refunds: HistoryRefundItem[];
 }
 
 export const phaseLabel: Record<string, string> = {
@@ -72,8 +92,8 @@ export const actionChinese: Record<string, string> = {
   FOLD: '弃牌',
   CHECK: '过牌',
   CALL: '跟注',
-  BET_TO: '下注至',
-  RAISE_TO: '加注至',
+  BET_TO: '下注到',
+  RAISE_TO: '加注到',
   ALL_IN: '全下',
   SMALL_BLIND: '下小盲',
   BIG_BLIND: '下大盲',
@@ -250,6 +270,61 @@ function asPositions(value: unknown): TablePosition[] {
     : [];
 }
 
+function asCards(value: unknown): Card[] {
+  return Array.isArray(value)
+    ? value.filter(
+        (card): card is Card => typeof card === 'string' && /^[2-9TJQKA][cdhs]$/.test(card),
+      )
+    : [];
+}
+
+export function historySettlement(resultValue: unknown): HistorySettlementSummary | null {
+  const result = asRecord(resultValue);
+  const awards = Array.isArray(result.awards) ? result.awards : [];
+  const refunds = Array.isArray(result.refunds) ? result.refunds : [];
+  if (!awards.length && !refunds.length && typeof result.reason !== 'string') return null;
+
+  const payouts = new Map<string, HistoryPayoutItem>();
+  let totalPot = 0;
+  for (const awardValue of awards) {
+    const award = asRecord(awardValue);
+    const potIndex = asNumber(award.potIndex);
+    totalPot += asNumber(award.amount) ?? 0;
+    const shares = Array.isArray(award.shares) ? award.shares : [];
+    for (const shareValue of shares) {
+      const share = asRecord(shareValue);
+      const playerId = asString(share.playerId);
+      const amount = asNumber(share.amount);
+      if (!playerId || amount === undefined) continue;
+      const current = payouts.get(playerId) ?? { playerId, amount: 0, potIndexes: [] };
+      current.amount += amount;
+      if (potIndex !== undefined && !current.potIndexes.includes(potIndex)) {
+        current.potIndexes.push(potIndex);
+      }
+      payouts.set(playerId, current);
+    }
+  }
+
+  const reason =
+    result.reason === 'UNCONTESTED' ||
+    result.reason === 'SHOWDOWN' ||
+    result.reason === 'LIVE_CONFIRMED'
+      ? result.reason
+      : 'UNKNOWN';
+  return {
+    reason,
+    communityCards: asCards(result.communityCards),
+    totalPot,
+    payouts: [...payouts.values()].sort((left, right) => right.amount - left.amount),
+    refunds: refunds.flatMap((refundValue) => {
+      const refund = asRecord(refundValue);
+      const playerId = asString(refund.playerId);
+      const amount = asNumber(refund.amount);
+      return playerId && amount !== undefined ? [{ playerId, amount }] : [];
+    }),
+  };
+}
+
 export function historyActions(
   hand: HandHistoryItem,
   playerNames: Map<string, string>,
@@ -304,6 +379,8 @@ export function historyActions(
       return;
     }
     if (eventType === 'STREET_DEALT' || eventType === 'LIVE_STREET_DEALT') {
+      const board = asCards(payload.communityCards);
+      const dealtCount = street === 'FLOP' ? 3 : street === 'TURN' || street === 'RIVER' ? 1 : 0;
       output.push({
         seq,
         street,
@@ -311,6 +388,7 @@ export function historyActions(
         nickname: '牌桌',
         positions: [],
         action: 'DEAL',
+        cards: dealtCount > 0 ? board.slice(-dealtCount) : [],
         createdAt,
       });
       return;
@@ -346,19 +424,28 @@ export function historyActions(
 }
 
 export function naturalAction(action: TableActionItem): string {
-  const position = action.positions.length ? `${action.positions.join('/')} ` : '';
+  const position = action.positions.length ? `${positionLabel(action.positions)} · ` : '';
   const actor = `${position}${action.nickname}`;
-  if (action.action === 'DEAL') return `${phaseLabel[action.street] ?? action.street}发牌`;
+  if (action.action === 'DEAL') {
+    const cards = action.cards?.map(cardText).join(' ') ?? '';
+    return `${phaseLabel[action.street] ?? action.street}发牌${cards ? ` · ${cards}` : ''}`;
+  }
   const verb = actionChinese[action.action] ?? '行动';
   const hidesAmount = action.action === 'FOLD' || action.action === 'CHECK';
   const amount = hidesAmount ? undefined : action.amount;
   const target = hidesAmount ? undefined : action.amountTo;
   const targetCopy = target === undefined ? '' : ` ${formatPoints(target)}`;
   const investedCopy =
-    amount === undefined
+    amount === undefined || (target !== undefined && amount === target)
       ? ''
       : target !== undefined && amount !== target
         ? `（本次投入 ${formatPoints(amount)}）`
         : ` ${formatPoints(amount)}`;
   return `${actor} ${verb}${targetCopy}${investedCopy}${action.timedOut ? '（超时）' : ''}`;
+}
+
+function cardText(card: Card): string {
+  const suit = card.slice(-1);
+  const symbol: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
+  return `${cardRankLabel(card)}${symbol[suit] ?? ''}`;
 }

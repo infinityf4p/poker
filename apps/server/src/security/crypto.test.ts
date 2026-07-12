@@ -7,7 +7,9 @@ describe('snapshot crypto', () => {
     const wrongKey = Buffer.alloc(32, 8).toString('base64');
     const privateState = { deck: ['As', 'Kh'], holeCards: { player: ['2c', '2d'] } };
     const encrypted = encryptSnapshot(privateState, key);
-    expect(encrypted.ciphertext).not.toContain('As');
+    expect(Buffer.from(encrypted.ciphertext, 'base64')).not.toEqual(
+      Buffer.from(JSON.stringify(privateState), 'utf8'),
+    );
     expect(decryptSnapshot(encrypted, key)).toEqual(privateState);
     expect(() => decryptSnapshot(encrypted, wrongKey)).toThrow();
   });

@@ -22,6 +22,24 @@ export interface PokerApp {
   io: SocketServer;
 }
 
+export function safeErrorLogContext(error: unknown): {
+  errorName: string;
+  errorCode?: string;
+  causeCode?: string;
+} {
+  const record =
+    typeof error === 'object' && error !== null ? (error as Record<string, unknown>) : {};
+  const cause =
+    typeof record.cause === 'object' && record.cause !== null
+      ? (record.cause as Record<string, unknown>)
+      : {};
+  return {
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+    ...(typeof record.code === 'string' ? { errorCode: record.code } : {}),
+    ...(typeof cause.code === 'string' ? { causeCode: cause.code } : {}),
+  };
+}
+
 export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
   const app = Fastify({
     logger:
@@ -34,7 +52,10 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
                 'req.headers.authorization',
                 'req.headers.cookie',
                 'res.headers.set-cookie',
+                'err.params',
                 '*.password',
+                '*.passwordHash',
+                '*.password_hash',
                 '*.holeCards',
                 '*.turnToken',
               ],
@@ -48,6 +69,27 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
 
   await app.register(cookie, { secret: deps.config.COOKIE_SECRET });
   await app.register(rateLimit, { global: false });
+
+  app.setErrorHandler((error, request, reply) => {
+    const caught =
+      typeof error === 'object' && error !== null
+        ? (error as { statusCode?: unknown; code?: unknown; message?: unknown })
+        : {};
+    const statusCode =
+      typeof caught.statusCode === 'number' && caught.statusCode >= 400 && caught.statusCode < 500
+        ? caught.statusCode
+        : 500;
+    if (statusCode < 500) {
+      return reply.code(statusCode).send({
+        error: typeof caught.code === 'string' ? caught.code : 'BAD_REQUEST',
+        message: typeof caught.message === 'string' ? caught.message : '请求参数无效',
+      });
+    }
+    request.log.error({ failure: safeErrorLogContext(error) }, 'unhandled request error');
+    return reply
+      .code(500)
+      .send({ error: 'INTERNAL_ERROR', message: '服务器暂时无法处理请求，请稍后重试' });
+  });
 
   app.addHook('onSend', async (request, reply, payload) => {
     reply.header('X-Robots-Tag', 'noindex, noarchive');
@@ -84,6 +126,10 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
     app.get('/*', async (request, reply) => {
       if (request.url.startsWith('/api/') || request.url.startsWith('/socket.io/')) {
         return reply.code(404).send({ error: 'NOT_FOUND' });
+      }
+      const pathname = request.url.split('?', 1)[0] ?? '';
+      if (pathname.startsWith('/assets/') || /\.[a-z0-9]+$/i.test(pathname)) {
+        return reply.code(404).send({ error: 'ASSET_NOT_FOUND' });
       }
       return reply.header('Cache-Control', 'no-store').sendFile('index.html');
     });

@@ -8,6 +8,7 @@ import {
   userLoginSchema,
 } from '@poker/protocol';
 import { describe, expect, it } from 'vitest';
+import { validationErrorBody } from './http.js';
 
 describe('permanent user auth contract', () => {
   it('accepts an administrator-created account and a strong temporary password', () => {
@@ -21,9 +22,47 @@ describe('permanent user auth contract', () => {
   });
 
   it('rejects weak temporary passwords and invalid account names', () => {
+    const parsed = createUserAccountSchema.safeParse({
+      username: 'bad name',
+      password: 'temporary-passphrase',
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(validationErrorBody(parsed.error.issues)).toMatchObject({
+        error: 'BAD_REQUEST',
+        message: '账号只能包含字母、数字、点、下划线和短横线',
+      });
+    }
+  });
+
+  it('requires a display name when the login account is too long for a seat label', () => {
+    const username = 'player_name_that_is_longer_than_twenty';
+    const parsed = createUserAccountSchema.safeParse({
+      username,
+      password: 'temporary-passphrase',
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(validationErrorBody(parsed.error.issues)).toMatchObject({
+        error: 'BAD_REQUEST',
+        message: '账号超过 20 位时必须填写 20 位以内的显示名称',
+      });
+    }
     expect(
-      createUserAccountSchema.safeParse({ username: 'bad name', password: 'short' }).success,
-    ).toBe(false);
+      createUserAccountSchema.safeParse({
+        username,
+        displayName: '长账号玩家',
+        password: 'temporary-passphrase',
+      }).success,
+    ).toBe(true);
+  });
+
+  it('keeps a readable fallback when validation has no issues', () => {
+    expect(validationErrorBody([])).toEqual({
+      error: 'BAD_REQUEST',
+      message: '请求参数无效',
+      issues: [],
+    });
   });
 
   it('allows invite joins to use the account display name by default', () => {
