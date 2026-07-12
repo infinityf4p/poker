@@ -31,7 +31,7 @@ If any real secret was ever committed, history rewriting is not sufficient: revo
 - [x] `pnpm build`
 - [x] `docker compose --env-file infra/.env.production.example -f infra/compose.yaml config --quiet`
 - [x] Production Docker image builds from the reviewed release tree.
-- [ ] Gitleaks and CodeQL complete without unresolved findings on GitHub.
+- [x] Gitleaks and CodeQL complete without unresolved findings on GitHub.
 - [x] `pnpm audit --prod` reports no known vulnerabilities.
 
 ## Release and rollback
@@ -40,6 +40,6 @@ If any real secret was ever committed, history rewriting is not sufficient: revo
 - [x] Database migrations and the required fresh-database boundary are documented.
 - [x] A fresh PostgreSQL 18 migration is tested from the production image.
 - [x] A backup is verified by restoring it into an isolated database.
-- [ ] The production image is tagged with the release version and immutable commit SHA.
+- [x] The production image is tagged with the release version and immutable commit SHA.
 - [x] Rollback steps name the previous image and required schema restore boundary.
 - [x] The release owner explicitly approved a public repository and production data reset.
