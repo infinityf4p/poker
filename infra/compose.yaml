@@ -1,0 +1,115 @@
+name: ${COMPOSE_PROJECT_NAME:-poker-infinity}
+
+x-app-common: &app-common
+  image: ${APP_IMAGE_REPOSITORY:-poker-app}:${APP_IMAGE_TAG:-latest}
+  build:
+    context: ..
+    dockerfile: infra/Dockerfile
+    args:
+      APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
+  environment:
+    NODE_ENV: production
+    HOST: 0.0.0.0
+    PORT: 3000
+    WEB_DIST_DIR: /opt/poker/web/dist
+    TRUST_PROXY: 'true'
+    PUBLIC_ORIGIN: ${PUBLIC_ORIGIN:?PUBLIC_ORIGIN must be set}
+    DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+    COOKIE_SECRET: ${COOKIE_SECRET:?COOKIE_SECRET must be set}
+    SNAPSHOT_KEY: ${SNAPSHOT_KEY:?SNAPSHOT_KEY must be set}
+    TOKEN_PEPPER: ${TOKEN_PEPPER:?TOKEN_PEPPER must be set}
+    ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+    ADMIN_PASSWORD_HASH: ${ADMIN_PASSWORD_HASH:?ADMIN_PASSWORD_HASH must be set}
+    RETENTION_DAYS: ${RETENTION_DAYS:-30}
+    ROOM_IDLE_HOURS: ${ROOM_IDLE_HOURS:-12}
+    APP_BUILD_SHA: ${APP_BUILD_SHA:-unknown}
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  networks:
+    - backend
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '5'
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE:-postgres:18-alpine}
+    container_name: ${POSTGRES_CONTAINER_NAME:-poker-postgres}
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      PGDATA: /var/lib/postgresql/18/docker
+    volumes:
+      - '${POSTGRES_DATA_PATH:-postgres-data}:/var/lib/postgresql'
+    shm_size: 256mb
+    restart: unless-stopped
+    stop_grace_period: 1m
+    networks:
+      - backend
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - pg_isready --username="$${POSTGRES_USER}" --dbname="$${POSTGRES_DB}"
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+
+  migrate:
+    <<: *app-common
+    restart: 'no'
+    command:
+      - node
+      - node_modules/@poker/db/dist/migrate.js
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    <<: *app-common
+    restart: unless-stopped
+    stop_grace_period: 30s
+    ports:
+      - '${APP_BIND_ADDRESS:-127.0.0.1}:${APP_BIND_PORT:-3000}:3000'
+    networks:
+      - backend
+      - edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - >-
+          const n=require('node:net');const s=n.connect(3000,'127.0.0.1');
+          s.setTimeout(3000);s.on('connect',()=>{s.end();process.exit(0)});
+          s.on('timeout',()=>process.exit(1));s.on('error',()=>process.exit(1));
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  postgres-data:
+
+networks:
+  backend:
+    internal: true
+  edge:

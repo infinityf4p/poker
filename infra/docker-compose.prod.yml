@@ -1,0 +1,4 @@
+# Backwards-compatible entry point. New deployments can run `docker compose`
+# directly from the infra directory, which discovers compose.yaml.
+include:
+  - path: compose.yaml

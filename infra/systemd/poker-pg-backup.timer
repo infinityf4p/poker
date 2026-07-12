@@ -1,0 +1,11 @@
+[Unit]
+Description=Run Poker Infinity PostgreSQL backup daily
+
+[Timer]
+OnCalendar=*-*-* 03:00:00 UTC
+RandomizedDelaySec=2m
+Persistent=true
+Unit=poker-pg-backup.service
+
+[Install]
+WantedBy=timers.target

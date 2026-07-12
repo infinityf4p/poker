@@ -1,0 +1,16 @@
+node_modules/
+dist/
+coverage/
+playwright-report/
+test-results/
+work/
+outputs/
+.env
+.env.*
+!.env.example
+!infra/.env.production.example
+*.log
+.DS_Store
+.pnpm-store/
+apps/web/public/sw.js
+apps/web/public/workbox-*.js

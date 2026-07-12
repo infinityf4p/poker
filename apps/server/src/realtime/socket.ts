@@ -1,0 +1,160 @@
+import type { FastifyInstance } from 'fastify';
+import { parse as parseCookie } from 'cookie';
+import { Server, type Socket } from 'socket.io';
+import type { ZodType } from 'zod';
+import {
+  emptyCommandSchema,
+  handActionCommandSchema,
+  liveResultProposalIdCommandSchema,
+  liveResultProposeCommandSchema,
+  liveStreetDealtCommandSchema,
+  seatClaimCommandSchema,
+  topUpCommandSchema,
+  type CommandFailure,
+  type CommandResult,
+} from '@poker/protocol';
+import type { AppConfig } from '../config.js';
+import type { PokerRepository } from '../repository.js';
+import type { RoomManager } from '../room/manager.js';
+import { PLAYER_COOKIE } from '../security/cookies.js';
+
+interface SocketData {
+  playerId: string;
+  roomId: string;
+}
+
+interface SocketDependencies {
+  config: AppConfig;
+  repository: PokerRepository;
+  rooms: RoomManager;
+}
+
+type Ack = (result: CommandResult) => void;
+
+const badRequest = (message: string): CommandFailure => ({
+  ok: false,
+  code: 'BAD_REQUEST',
+  message,
+});
+
+export function registerSocketServer(app: FastifyInstance, deps: SocketDependencies): Server {
+  const io = new Server(app.server, {
+    path: '/socket.io/',
+    serveClient: false,
+    cors: { origin: deps.config.PUBLIC_ORIGIN, credentials: true },
+    connectionStateRecovery: {
+      maxDisconnectionDuration: 2 * 60 * 1_000,
+      skipMiddlewares: false,
+    },
+    maxHttpBufferSize: 64 * 1_024,
+    transports: ['websocket', 'polling'],
+  });
+
+  deps.rooms.setProjectionListener((roomId, projections) => {
+    io.to(`room:${roomId}`).emit('room.public', projections.public);
+    for (const [playerId, privateProjection] of Object.entries(projections.privateByPlayerId)) {
+      io.to(`player:${playerId}`).emit('room.private', privateProjection);
+    }
+    for (const playerId of projections.revokedPlayerIds) {
+      io.to(`player:${playerId}`).emit('membership.revoked', { roomId });
+      void io
+        .in(`player:${playerId}`)
+        .fetchSockets()
+        .then((sockets) => sockets.forEach((socket) => socket.disconnect(true)))
+        .catch((error: unknown) =>
+          app.log.error({ error, roomId, playerId }, 'failed to disconnect kicked player'),
+        );
+    }
+  });
+
+  io.use(async (socket, next) => {
+    try {
+      const cookies = parseCookie(socket.request.headers.cookie ?? '');
+      const requestedRoomId = socket.handshake.auth?.roomId;
+      if (typeof requestedRoomId !== 'string' || requestedRoomId.length > 64) {
+        return next(new Error('ROOM_REQUIRED'));
+      }
+      const player = await deps.repository.getPlayerBySession(
+        cookies[PLAYER_COOKIE],
+        requestedRoomId,
+      );
+      if (!player) return next(new Error('UNAUTHORIZED'));
+      (socket.data as SocketData).playerId = player.id;
+      (socket.data as SocketData).roomId = player.roomId;
+      return next();
+    } catch (error) {
+      return next(error instanceof Error ? error : new Error('UNAUTHORIZED'));
+    }
+  });
+
+  io.on('connection', async (socket: Socket) => {
+    const { playerId, roomId } = socket.data as SocketData;
+    await socket.join([`room:${roomId}`, `player:${playerId}`]);
+    try {
+      await deps.rooms.setConnected(roomId, playerId, true);
+      socket.emit('room.snapshot', await deps.rooms.snapshot(roomId, playerId));
+    } catch (error) {
+      app.log.error({ error, roomId, playerId }, 'socket room recovery failed');
+      socket.emit('room.error', { code: 'ROOM_FROZEN', message: '牌局恢复失败，禁止继续行动' });
+      socket.disconnect(true);
+      return;
+    }
+
+    const command = <T>(
+      event: string,
+      schema: ZodType<T>,
+      handler: (value: T) => Promise<CommandResult>,
+    ) => {
+      socket.on(event, async (input: unknown, ack?: Ack) => {
+        const parsed = schema.safeParse(input);
+        const result = parsed.success
+          ? await handler(parsed.data)
+          : badRequest(parsed.error.issues.map((issue) => issue.message).join('; '));
+        if (typeof ack === 'function') ack(result);
+      });
+    };
+
+    command('seat.claim', seatClaimCommandSchema, (value) =>
+      deps.rooms.seatClaim(roomId, playerId, value),
+    );
+    command('player.ready', emptyCommandSchema, (value) =>
+      deps.rooms.ready(roomId, playerId, value),
+    );
+    command('player.sitOut', emptyCommandSchema, (value) =>
+      deps.rooms.sitOut(roomId, playerId, value),
+    );
+    command('stack.topUp', topUpCommandSchema, (value) =>
+      deps.rooms.topUp(roomId, playerId, value),
+    );
+    command('hand.act', handActionCommandSchema, (value) =>
+      deps.rooms.act(roomId, playerId, value),
+    );
+    command('live.streetDealt', liveStreetDealtCommandSchema, (value) =>
+      deps.rooms.liveStreetDealt(roomId, playerId, value),
+    );
+    command('live.resultPropose', liveResultProposeCommandSchema, (value) =>
+      deps.rooms.liveResultPropose(roomId, playerId, value),
+    );
+    command('live.resultObject', liveResultProposalIdCommandSchema, (value) =>
+      deps.rooms.liveResultObject(roomId, playerId, value),
+    );
+    command('live.resultConfirm', liveResultProposalIdCommandSchema, (value) =>
+      deps.rooms.liveResultConfirm(roomId, playerId, value),
+    );
+
+    socket.on('disconnect', () => {
+      setImmediate(async () => {
+        const remaining = await io.in(`player:${playerId}`).fetchSockets();
+        if (remaining.length === 0) {
+          try {
+            await deps.rooms.setConnected(roomId, playerId, false);
+          } catch (error) {
+            app.log.error({ error, roomId, playerId }, 'failed to persist disconnect');
+          }
+        }
+      });
+    });
+  });
+
+  return io;
+}

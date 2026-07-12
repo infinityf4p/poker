@@ -1,0 +1,11 @@
+[Unit]
+Description=Prune Poker Infinity PostgreSQL backups daily
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+RandomizedDelaySec=2m
+Persistent=true
+Unit=poker-pg-retention.service
+
+[Install]
+WantedBy=timers.target

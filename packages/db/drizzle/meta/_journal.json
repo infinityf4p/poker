@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1783834544203,
+      "tag": "0000_dapper_makkari",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1783837475941,
+      "tag": "0001_typical_maverick",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783847063118,
+      "tag": "0002_pink_magma",
+      "breakpoints": true
+    }
+  ]
+}

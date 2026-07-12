@@ -1,0 +1,2636 @@
+import {
+  useEffect,
+  useMemo,
+  useState,
+  type CSSProperties,
+  type FormEvent,
+  type ReactNode,
+} from 'react';
+import type {
+  AdminRoomSummary,
+  Card,
+  HandHistoryItem,
+  PlayerAction,
+  PublicRoomProjection,
+  RoomMode,
+} from '@poker/protocol';
+import {
+  api,
+  type AdminSession,
+  type CreateRoomResponse,
+  type InvitePreview,
+  type JoinResponse,
+  type AdminRoomPlayerSummary,
+  type AdminUserSummary,
+  type UserRoomSummary,
+  type UserSession,
+} from './api';
+import { Icon, type IconName } from './icons';
+import {
+  actingCopy,
+  betSuggestions,
+  cardRankLabel,
+  formatPoints,
+  historyActions,
+  naturalAction,
+  phaseLabel,
+  positionLabel,
+  positionsForRoom,
+  statusLabel,
+  type EnhancedRoomProjection,
+  type EnhancedSeat,
+  type TableActionItem,
+  type TablePosition,
+} from './poker-ui';
+import { useRoom } from './use-room';
+
+type Route =
+  | { kind: 'home' }
+  | { kind: 'admin' }
+  | { kind: 'join'; token: string }
+  | { kind: 'room'; roomId: string };
+
+function currentRoute(): Route {
+  const parts = window.location.pathname.split('/').filter(Boolean);
+  if (parts[0] === 'admin') return { kind: 'admin' };
+  if (parts[0] === 'join' && parts[1]) return { kind: 'join', token: parts[1] };
+  if (parts[0] === 'room' && parts[1]) return { kind: 'room', roomId: parts[1] };
+  return { kind: 'home' };
+}
+
+function navigate(path: string): void {
+  window.history.pushState({}, '', path);
+  window.dispatchEvent(new PopStateEvent('popstate'));
+}
+
+function Brand({ compact = false }: { compact?: boolean }) {
+  return (
+    <button className="brand real-brand" onClick={() => navigate('/')} aria-label="返回首页">
+      <span className="brand-mark real-brand-mark">
+        <Icon name="spade" size={23} />
+      </span>
+      {!compact && (
+        <span>
+          <strong>同桌</strong>
+          <small>FRIENDS TABLE</small>
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ModeBadge({ mode }: { mode: RoomMode }) {
+  return (
+    <span className={`mode-badge mode-badge--${mode.toLowerCase()}`}>
+      <Icon name={mode === 'ONLINE' ? 'cards' : 'table'} size={14} />
+      {mode === 'ONLINE' ? 'ONLINE · 自动发牌' : 'LIVE · 现场牌面'}
+    </span>
+  );
+}
+
+function Loading({ label = '正在加载…' }: { label?: string }) {
+  return (
+    <main className="state-page">
+      <span className="loader" />
+      <p>{label}</p>
+    </main>
+  );
+}
+
+function ErrorBox({ children, onClose }: { children: ReactNode; onClose?: () => void }) {
+  return (
+    <div className="real-error" role="alert">
+      <span>
+        <Icon name="warning" size={17} />
+      </span>
+      <p>{children}</p>
+      {onClose && (
+        <button type="button" onClick={onClose} aria-label="关闭提示">
+          <Icon name="close" size={17} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function IconButton({
+  icon,
+  label,
+  onClick,
+  className = '',
+}: {
+  icon: IconName;
+  label: string;
+  onClick: () => void;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      className={`icon-button ${className}`}
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+    >
+      <Icon name={icon} />
+    </button>
+  );
+}
+
+function App() {
+  const [route, setRoute] = useState<Route>(currentRoute);
+  useEffect(() => {
+    const update = () => setRoute(currentRoute());
+    window.addEventListener('popstate', update);
+    return () => window.removeEventListener('popstate', update);
+  }, []);
+
+  if (route.kind === 'admin') return <AdminPage />;
+  if (route.kind === 'join') return <JoinPage token={route.token} />;
+  if (route.kind === 'room') return <RoomPage roomId={route.roomId} />;
+  return <HomePage />;
+}
+
+function HomePage() {
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [rooms, setRooms] = useState<UserRoomSummary[]>([]);
+  const [checking, setChecking] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [passwordOpen, setPasswordOpen] = useState(false);
+
+  const loadRooms = async () => setRooms(await api<UserRoomSummary[]>('/api/me/rooms'));
+  useEffect(() => {
+    api<UserSession>('/api/auth/session')
+      .then(async (user) => {
+        setSession(user);
+        setPasswordOpen(user.mustChangePassword);
+        if (!user.mustChangePassword) await loadRooms();
+      })
+      .catch(() => setSession(null))
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) return <Loading label="正在验证玩家会话…" />;
+  if (!session) {
+    return (
+      <UserLogin
+        error={error}
+        onSubmit={async (username, password) => {
+          try {
+            const user = await api<UserSession>('/api/auth/login', {
+              method: 'POST',
+              body: JSON.stringify({ username, password }),
+            });
+            setSession(user);
+            setError(null);
+            setPasswordOpen(user.mustChangePassword);
+            if (!user.mustChangePassword) await loadRooms();
+          } catch (caught) {
+            setError(caught instanceof Error ? caught.message : '登录失败');
+          }
+        }}
+      />
+    );
+  }
+
+  return (
+    <main className="lobby-page">
+      <header className="lobby-header page-container">
+        <Brand />
+        <div className="account-actions">
+          <button type="button" className="account-pill" onClick={() => setPasswordOpen(true)}>
+            <span className="avatar">{session.displayName.slice(0, 1).toUpperCase()}</span>
+            <span>
+              <small>@{session.username}</small>
+              <strong>{session.displayName}</strong>
+            </span>
+          </button>
+          <IconButton
+            icon="logout"
+            label="退出登录"
+            onClick={() =>
+              void api('/api/auth/logout', { method: 'POST' }).then(() => setSession(null))
+            }
+          />
+        </div>
+      </header>
+      <div className="page-container lobby-content">
+        <section className="lobby-hero">
+          <div>
+            <span className="eyebrow">MY PRIVATE TABLES</span>
+            <h1>{session.displayName}，今晚坐哪桌？</h1>
+            <p>进入已获授权的好友桌，所有筹码均为不可兑换的娱乐积分。</p>
+          </div>
+          <JoinCodeForm />
+        </section>
+        {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+        <section className="user-room-grid" aria-label="我的房间">
+          {rooms.map((room) => (
+            <button
+              type="button"
+              className="user-room-card"
+              key={room.roomId}
+              onClick={() => navigate(`/room/${room.roomId}`)}
+              disabled={room.membershipStatus !== 'ACTIVE'}
+            >
+              <span className={`room-card-icon room-card-icon--${room.mode.toLowerCase()}`}>
+                <Icon name={room.mode === 'ONLINE' ? 'cards' : 'table'} size={25} />
+              </span>
+              <span className="user-room-main">
+                <span>
+                  <ModeBadge mode={room.mode} />
+                  <i>{statusLabel[room.status] ?? room.status}</i>
+                </span>
+                <strong>{room.name}</strong>
+                <small>
+                  {room.seat === null ? '尚未选座' : `座位 ${room.seat + 1}`} · {room.nickname}
+                </small>
+              </span>
+              <span className="room-stack">
+                <small>当前筹码</small>
+                <strong>{formatPoints(room.stack)}</strong>
+              </span>
+              <Icon name="arrow-right" className="room-arrow" />
+            </button>
+          ))}
+          {rooms.length === 0 && (
+            <div className="empty-state rich-empty">
+              <Icon name="table" size={32} />
+              <strong>还没有加入牌桌</strong>
+              <span>向管理员获取邀请链接，登录后即可加入。</span>
+            </div>
+          )}
+        </section>
+        <button type="button" className="admin-entry" onClick={() => navigate('/admin')}>
+          <Icon name="shield" size={16} /> 管理员入口
+        </button>
+      </div>
+      {passwordOpen && (
+        <PasswordDialog
+          locked={session.mustChangePassword}
+          onClose={() => setPasswordOpen(false)}
+          onComplete={async (updated) => {
+            setSession(updated);
+            setPasswordOpen(false);
+            await loadRooms();
+          }}
+        />
+      )}
+    </main>
+  );
+}
+
+function UserLogin({
+  error,
+  onSubmit,
+}: {
+  error: string | null;
+  onSubmit: (username: string, password: string) => Promise<void>;
+}) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  return (
+    <main className="login-page account-login">
+      <div className="login-ambient login-ambient--one" />
+      <div className="login-ambient login-ambient--two" />
+      <section className="login-card account-login-card">
+        <Brand />
+        <div className="login-visual" aria-hidden="true">
+          <span>
+            <Icon name="cards" size={38} />
+          </span>
+          <i />
+          <i />
+          <i />
+        </div>
+        <div className="login-heading">
+          <span className="eyebrow">PRIVATE TABLES · MEMBERS ONLY</span>
+          <h1>朋友到齐，牌桌就绪。</h1>
+          <p>登录后进入你的好友桌。线上自动发牌，线下专注收发筹码。</p>
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <form
+          className="login-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setPending(true);
+            void onSubmit(username.trim(), password).finally(() => setPending(false));
+          }}
+        >
+          <label className="field field-with-icon">
+            <span>账号</span>
+            <span>
+              <Icon name="user" size={18} />
+              <input
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                autoComplete="username"
+                autoFocus
+                required
+              />
+            </span>
+          </label>
+          <label className="field field-with-icon">
+            <span>密码</span>
+            <span>
+              <Icon name="lock" size={18} />
+              <input
+                type="password"
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                autoComplete="current-password"
+                required
+              />
+            </span>
+          </label>
+          <button className="primary-button" disabled={pending || !username.trim() || !password}>
+            {pending ? '正在登录…' : '登录并查看我的牌桌'}
+            {!pending && <Icon name="arrow-right" size={18} />}
+          </button>
+        </form>
+        <button type="button" className="text-button" onClick={() => navigate('/admin')}>
+          管理员登录
+        </button>
+        <p className="safety-line">
+          <Icon name="shield" size={14} /> 仅供好友娱乐 · 积分不可兑换、转让或提现
+        </p>
+      </section>
+    </main>
+  );
+}
+
+function JoinCodeForm() {
+  const [value, setValue] = useState('');
+  const go = () => {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    try {
+      const url = new URL(trimmed, window.location.origin);
+      const token = url.pathname.split('/').filter(Boolean).at(-1);
+      if (token) navigate(`/join/${token}`);
+    } catch {
+      navigate(`/join/${encodeURIComponent(trimmed)}`);
+    }
+  };
+  return (
+    <form
+      className="join-code"
+      onSubmit={(event) => {
+        event.preventDefault();
+        go();
+      }}
+    >
+      <label htmlFor="invite-code">邀请链接或邀请码</label>
+      <div>
+        <input
+          id="invite-code"
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          placeholder="粘贴朋友发来的邀请"
+        />
+        <button disabled={!value.trim()}>
+          <Icon name="door" size={18} /> 加入
+        </button>
+      </div>
+    </form>
+  );
+}
+
+function PasswordDialog({
+  locked,
+  onClose,
+  onComplete,
+}: {
+  locked: boolean;
+  onClose: () => void;
+  onComplete: (session: UserSession) => Promise<void>;
+}) {
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  return (
+    <Modal
+      title={locked ? '首次登录，请设置新密码' : '修改登录密码'}
+      onClose={onClose}
+      locked={locked}
+    >
+      <p>新密码至少 12 位。提交成功后，其他设备上的旧会话将失效。</p>
+      {error && <ErrorBox>{error}</ErrorBox>}
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (newPassword !== confirm) {
+            setError('两次输入的新密码不一致');
+            return;
+          }
+          setPending(true);
+          api<UserSession>('/api/auth/password', {
+            method: 'POST',
+            body: JSON.stringify({ currentPassword, newPassword }),
+          })
+            .then(onComplete)
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '修改失败'))
+            .finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>当前密码</span>
+          <input
+            type="password"
+            value={currentPassword}
+            onChange={(event) => setCurrentPassword(event.target.value)}
+            autoComplete="current-password"
+            required
+            autoFocus
+          />
+        </label>
+        <label className="field">
+          <span>新密码</span>
+          <input
+            type="password"
+            minLength={12}
+            value={newPassword}
+            onChange={(event) => setNewPassword(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <label className="field">
+          <span>再次输入新密码</span>
+          <input
+            type="password"
+            minLength={12}
+            value={confirm}
+            onChange={(event) => setConfirm(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <button
+          className="primary-button"
+          disabled={pending || newPassword.length < 12 || newPassword !== confirm}
+        >
+          {pending ? '正在保存…' : '保存新密码'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function AdminPage() {
+  const [session, setSession] = useState<AdminSession | null>(null);
+  const [checking, setChecking] = useState(true);
+  const [rooms, setRooms] = useState<AdminRoomSummary[]>([]);
+  const [users, setUsers] = useState<AdminUserSummary[]>([]);
+  const [tab, setTab] = useState<'rooms' | 'accounts'>('rooms');
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [creatingAccount, setCreatingAccount] = useState(false);
+  const [selectedRoom, setSelectedRoom] = useState<AdminRoomSummary | null>(null);
+  const [roomPlayers, setRoomPlayers] = useState<AdminRoomPlayerSummary[]>([]);
+  const [latestInvite, setLatestInvite] = useState<{ roomId: string; url: string } | null>(null);
+
+  const loadRooms = async () => setRooms(await api<AdminRoomSummary[]>('/api/admin/rooms'));
+  const loadUsers = async () => setUsers(await api<AdminUserSummary[]>('/api/admin/users'));
+  const loadRoomPlayers = async (roomId: string) =>
+    setRoomPlayers(await api<AdminRoomPlayerSummary[]>(`/api/admin/rooms/${roomId}/players`));
+  useEffect(() => {
+    api<AdminSession>('/api/admin/session')
+      .then(async (admin) => {
+        setSession(admin);
+        await Promise.all([loadRooms(), loadUsers()]);
+      })
+      .catch(() => setSession(null))
+      .finally(() => setChecking(false));
+  }, []);
+
+  if (checking) return <Loading label="正在验证管理员会话…" />;
+  if (!session) {
+    return (
+      <AdminLogin
+        error={error}
+        onSubmit={async (username, password) => {
+          try {
+            const admin = await api<AdminSession>('/api/admin/login', {
+              method: 'POST',
+              body: JSON.stringify({ username, password }),
+            });
+            setSession(admin);
+            setError(null);
+            await Promise.all([loadRooms(), loadUsers()]);
+          } catch (caught) {
+            setError(caught instanceof Error ? caught.message : '登录失败');
+          }
+        }}
+      />
+    );
+  }
+
+  const rotateInvite = async (roomId: string) => {
+    try {
+      const result = await api<{ inviteUrl: string }>(`/api/admin/rooms/${roomId}/invite`, {
+        method: 'POST',
+      });
+      setLatestInvite({ roomId, url: result.inviteUrl });
+      await navigator.clipboard.writeText(result.inviteUrl).catch(() => undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '生成邀请失败');
+    }
+  };
+
+  const archive = async (room: AdminRoomSummary, force = false) => {
+    const question = force
+      ? '这会退回本手全部投入并永久归档房间，确定继续？'
+      : '确定归档这个房间？';
+    if (!window.confirm(question)) return;
+    try {
+      await api(`/api/admin/rooms/${room.id}/${force ? 'force-abort' : 'archive'}`, {
+        method: 'POST',
+      });
+      await loadRooms();
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : '操作失败');
+    }
+  };
+
+  return (
+    <main className="dashboard-page real-admin">
+      <header className="dashboard-header page-container">
+        <Brand />
+        <button
+          className="profile-button"
+          onClick={async () => {
+            await api('/api/admin/logout', { method: 'POST' });
+            setSession(null);
+          }}
+        >
+          <span>
+            <small>管理员</small>
+            <strong>{session.username}</strong>
+          </span>
+          <b className="admin-avatar">
+            <Icon name="shield" size={18} />
+          </b>
+        </button>
+      </header>
+      <div className="page-container dashboard-content">
+        <section className="welcome-row">
+          <div>
+            <span className="eyebrow">PRIVATE CONTROL</span>
+            <h1>{tab === 'rooms' ? '牌桌管理' : '账号管理'}</h1>
+            <p>
+              {tab === 'rooms'
+                ? '配置好友桌成员与筹码，所有管理动作都会留下审计记录。'
+                : '为线下玩家创建独立账号，并在必要时重置首次登录密码。'}
+            </p>
+          </div>
+          <button
+            className="create-button"
+            onClick={() => (tab === 'rooms' ? setCreating(true) : setCreatingAccount(true))}
+          >
+            <Icon name="plus" size={18} /> {tab === 'rooms' ? '新建房间' : '新建账号'}
+          </button>
+        </section>
+        <nav className="admin-tabs" aria-label="管理区">
+          <button className={tab === 'rooms' ? 'active' : ''} onClick={() => setTab('rooms')}>
+            <Icon name="table" size={17} /> 房间 <span>{rooms.length}</span>
+          </button>
+          <button className={tab === 'accounts' ? 'active' : ''} onClick={() => setTab('accounts')}>
+            <Icon name="users" size={17} /> 账号 <span>{users.length}</span>
+          </button>
+        </nav>
+        {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+        {latestInvite && (
+          <div className="invite-output">
+            <div>
+              <small>新邀请已生成，旧邀请同时失效</small>
+              <code>{latestInvite.url}</code>
+            </div>
+            <button onClick={() => navigator.clipboard.writeText(latestInvite.url)}>复制</button>
+          </div>
+        )}
+        {tab === 'rooms' ? (
+          <section className="real-room-grid">
+            {rooms.map((room) => (
+              <article className="room-card" key={room.id}>
+                <div className="room-card-top">
+                  <ModeBadge mode={room.mode} />
+                  <span className={`status-pill status-pill--${room.status.toLowerCase()}`}>
+                    {room.status}
+                  </span>
+                </div>
+                <div className="real-room-title">
+                  <span>
+                    <Icon name={room.mode === 'ONLINE' ? 'cards' : 'table'} size={21} />
+                  </span>
+                  <div>
+                    <h2>{room.name}</h2>
+                    <p>
+                      第 {room.handNumber} 手 · {room.playerCount}/6 人
+                    </p>
+                  </div>
+                </div>
+                <div className="room-card-actions real-admin-actions">
+                  <button onClick={() => navigate(`/room/${room.id}?view=public`)}>
+                    <Icon name="eye" size={15} /> 公开牌桌
+                  </button>
+                  <button
+                    onClick={() => {
+                      setSelectedRoom(room);
+                      void loadRoomPlayers(room.id).catch((caught) =>
+                        setError(caught instanceof Error ? caught.message : '无法载入玩家'),
+                      );
+                    }}
+                  >
+                    <Icon name="users" size={15} /> 玩家与筹码
+                  </button>
+                  <button onClick={() => void rotateInvite(room.id)}>
+                    <Icon name="copy" size={15} /> 邀请
+                  </button>
+                  {room.status !== 'ARCHIVED' &&
+                    room.status !== 'ACTIVE' &&
+                    room.status !== 'DISPUTED' && (
+                      <button onClick={() => void archive(room)}>归档</button>
+                    )}
+                  {(room.status === 'ACTIVE' || room.status === 'DISPUTED') && (
+                    <button className="danger-button" onClick={() => void archive(room, true)}>
+                      退款中止
+                    </button>
+                  )}
+                </div>
+              </article>
+            ))}
+            {rooms.length === 0 && (
+              <div className="empty-state">还没有房间，先创建一个私密牌桌。</div>
+            )}
+          </section>
+        ) : (
+          <AccountsPanel
+            users={users}
+            onReset={async (user, password) => {
+              await api(`/api/admin/users/${user.id}/reset-password`, {
+                method: 'POST',
+                body: JSON.stringify({ password }),
+              });
+              await loadUsers();
+            }}
+          />
+        )}
+      </div>
+      {creating && (
+        <CreateRoomDialog
+          onClose={() => setCreating(false)}
+          onCreate={async (body) => {
+            try {
+              const created = await api<CreateRoomResponse>('/api/admin/rooms', {
+                method: 'POST',
+                body: JSON.stringify(body),
+              });
+              setLatestInvite({ roomId: created.roomId, url: created.inviteUrl });
+              await navigator.clipboard.writeText(created.inviteUrl).catch(() => undefined);
+              setCreating(false);
+              await loadRooms();
+            } catch (caught) {
+              setError(caught instanceof Error ? caught.message : '创建失败');
+            }
+          }}
+        />
+      )}
+      {creatingAccount && (
+        <CreateAccountDialog
+          onClose={() => setCreatingAccount(false)}
+          onCreate={async (body) => {
+            try {
+              await api<AdminUserSummary>('/api/admin/users', {
+                method: 'POST',
+                body: JSON.stringify(body),
+              });
+              setCreatingAccount(false);
+              await loadUsers();
+            } catch (caught) {
+              setError(caught instanceof Error ? caught.message : '账号创建失败');
+            }
+          }}
+        />
+      )}
+      {selectedRoom && (
+        <RoomPlayersDialog
+          room={selectedRoom}
+          users={users}
+          players={roomPlayers}
+          onClose={() => setSelectedRoom(null)}
+          onRefresh={() => loadRoomPlayers(selectedRoom.id)}
+          onError={setError}
+        />
+      )}
+    </main>
+  );
+}
+
+function AdminLogin({
+  error,
+  onSubmit,
+}: {
+  error: string | null;
+  onSubmit: (username: string, password: string) => Promise<void>;
+}) {
+  const [username, setUsername] = useState('admin');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  return (
+    <main className="login-page">
+      <section className="login-card">
+        <Brand />
+        <div className="login-heading">
+          <span className="eyebrow">ADMIN ONLY</span>
+          <h1>管理员登录</h1>
+          <p>管理员负责账号、房间成员与线下筹码校准；普通玩家请从首页登录。</p>
+        </div>
+        {error && <ErrorBox>{error}</ErrorBox>}
+        <form
+          className="login-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            setPending(true);
+            void onSubmit(username, password).finally(() => setPending(false));
+          }}
+        >
+          <label className="field">
+            <span>账号</span>
+            <input
+              value={username}
+              onChange={(event) => setUsername(event.target.value)}
+              autoComplete="username"
+            />
+          </label>
+          <label className="field">
+            <span>密码</span>
+            <input
+              type="password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete="current-password"
+              autoFocus
+            />
+          </label>
+          <button className="primary-button" disabled={pending || !password}>
+            {pending ? '正在登录…' : '进入管理台'}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
+function AccountsPanel({
+  users,
+  onReset,
+}: {
+  users: AdminUserSummary[];
+  onReset: (user: AdminUserSummary, password: string) => Promise<void>;
+}) {
+  const [resetting, setResetting] = useState<AdminUserSummary | null>(null);
+  return (
+    <section className="account-list">
+      <header className="data-header">
+        <span>玩家账号</span>
+        <span>登录状态</span>
+        <span>密码</span>
+        <span />
+      </header>
+      {users.map((user) => (
+        <article key={user.id}>
+          <span className="avatar">{user.displayName.slice(0, 1).toUpperCase()}</span>
+          <span className="account-identity">
+            <strong>{user.displayName}</strong>
+            <small>
+              @{user.username} · {new Date(user.createdAt).toLocaleDateString()}
+            </small>
+          </span>
+          <span className={`account-state ${user.loginEnabled ? 'active' : ''}`}>
+            {user.loginEnabled ? '可登录' : '已停用'}
+          </span>
+          <span className={user.mustChangePassword ? 'password-state pending' : 'password-state'}>
+            {user.mustChangePassword ? '待首次修改' : '已设置'}
+          </span>
+          <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
+            <Icon name="key" size={15} /> 重置密码
+          </button>
+        </article>
+      ))}
+      {users.length === 0 && <div className="empty-state">还没有普通玩家账号。</div>}
+      {resetting && (
+        <ResetPasswordDialog
+          user={resetting}
+          onClose={() => setResetting(null)}
+          onSubmit={async (password) => {
+            await onReset(resetting, password);
+            setResetting(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}
+
+function CreateAccountDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (body: { username: string; displayName: string; password: string }) => Promise<void>;
+}) {
+  const [username, setUsername] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  return (
+    <Modal title="创建普通玩家账号" onClose={onClose}>
+      <p>玩家首次登录后必须修改临时密码，账号可加入多个好友桌。</p>
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPending(true);
+          void onCreate({
+            username: username.trim(),
+            displayName: displayName.trim() || username.trim(),
+            password,
+          }).finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>登录账号</span>
+          <input
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="off"
+            maxLength={64}
+            required
+            autoFocus
+          />
+        </label>
+        <label className="field">
+          <span>显示名称</span>
+          <input
+            value={displayName}
+            onChange={(event) => setDisplayName(event.target.value)}
+            maxLength={32}
+            placeholder="未填写时使用账号名"
+          />
+        </label>
+        <label className="field">
+          <span>临时密码</span>
+          <input
+            type="password"
+            minLength={12}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            required
+          />
+        </label>
+        <p className="sheet-safety">
+          <Icon name="key" size={15} /> 请通过可信渠道把临时密码单独发给玩家。
+        </p>
+        <button
+          className="primary-button"
+          disabled={pending || username.trim().length < 3 || password.length < 12}
+        >
+          {pending ? '正在创建…' : '创建账号'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function ResetPasswordDialog({
+  user,
+  onClose,
+  onSubmit,
+}: {
+  user: AdminUserSummary;
+  onClose: () => void;
+  onSubmit: (password: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <Modal title={`重置 ${user.displayName} 的密码`} onClose={onClose}>
+      <p>重置会使现有玩家会话失效，并要求下次登录修改临时密码。</p>
+      {error && <ErrorBox>{error}</ErrorBox>}
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPending(true);
+          void onSubmit(password)
+            .catch((caught) => setError(caught instanceof Error ? caught.message : '重置失败'))
+            .finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>新临时密码</span>
+          <input
+            type="password"
+            minLength={12}
+            value={password}
+            onChange={(event) => setPassword(event.target.value)}
+            autoComplete="new-password"
+            required
+            autoFocus
+          />
+        </label>
+        <button className="primary-button" disabled={pending || password.length < 12}>
+          {pending ? '正在重置…' : '确认重置'}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function RoomPlayersDialog({
+  room,
+  users,
+  players,
+  onClose,
+  onRefresh,
+  onError,
+}: {
+  room: AdminRoomSummary;
+  users: AdminUserSummary[];
+  players: AdminRoomPlayerSummary[];
+  onClose: () => void;
+  onRefresh: () => Promise<void>;
+  onError: (message: string) => void;
+}) {
+  const assigned = new Set(players.map((player) => player.userId));
+  const availableUsers = users.filter((user) => user.loginEnabled && !assigned.has(user.id));
+  const [userId, setUserId] = useState(availableUsers[0]?.id ?? '');
+  const [nickname, setNickname] = useState('');
+  const [chipPlayer, setChipPlayer] = useState<AdminRoomPlayerSummary | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const mutate = async (path: string, body?: unknown): Promise<boolean> => {
+    setPending(true);
+    try {
+      await api(path, {
+        method: 'POST',
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      await onRefresh();
+      return true;
+    } catch (caught) {
+      onError(caught instanceof Error ? caught.message : '管理操作失败');
+      return false;
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Modal title={`${room.name} · 玩家与筹码`} onClose={onClose}>
+      <div className="room-player-tools">
+        <button
+          className="secondary-button"
+          onClick={() => navigate(`/room/${room.id}?view=public`)}
+        >
+          <Icon name="eye" size={16} /> 查看公开牌桌
+        </button>
+        <button
+          className="secondary-button"
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            api<{ roomId: string }>(`/api/admin/rooms/${room.id}/play-as-self`, {
+              method: 'POST',
+              body: JSON.stringify({}),
+            })
+              .then((membership) => navigate(`/room/${membership.roomId}`))
+              .catch((caught) =>
+                onError(caught instanceof Error ? caught.message : '无法以玩家身份加入'),
+              )
+              .finally(() => setPending(false));
+          }}
+        >
+          <Icon name="play" size={16} /> 以玩家身份加入并进入
+        </button>
+      </div>
+      <form
+        className="assign-player"
+        onSubmit={(event) => {
+          event.preventDefault();
+          if (!userId) return;
+          void mutate(`/api/admin/rooms/${room.id}/players`, {
+            userId,
+            ...(nickname.trim() ? { nickname: nickname.trim() } : {}),
+          }).then((ok) => {
+            if (!ok) return;
+            setNickname('');
+            const next = availableUsers.find((user) => user.id !== userId);
+            setUserId(next?.id ?? '');
+          });
+        }}
+      >
+        <label className="field">
+          <span>把账号加入房间</span>
+          <select
+            value={userId}
+            onChange={(event) => setUserId(event.target.value)}
+            disabled={!availableUsers.length}
+          >
+            {availableUsers.map((user) => (
+              <option value={user.id} key={user.id}>
+                {user.displayName} (@{user.username})
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>桌上昵称（可选）</span>
+          <input
+            value={nickname}
+            onChange={(event) => setNickname(event.target.value)}
+            maxLength={20}
+            placeholder="默认使用显示名称"
+          />
+        </label>
+        <button className="primary-button" disabled={!userId || pending}>
+          <Icon name="plus" size={16} /> 加入房间
+        </button>
+      </form>
+      <div className="room-player-list">
+        {players.map((player) => {
+          const inactive = player.membershipStatus !== 'ACTIVE';
+          return (
+            <article key={player.playerId} className={inactive ? 'inactive' : ''}>
+              <span className="avatar">{player.nickname.slice(0, 1).toUpperCase()}</span>
+              <span className="player-identity">
+                <strong>{player.nickname}</strong>
+                <small>
+                  @{player.username} · {player.seat === null ? '未选座' : `座位 ${player.seat + 1}`}{' '}
+                  · {player.connected ? '在线' : '离线'}
+                </small>
+              </span>
+              <span className="player-stack">
+                <small>筹码</small>
+                <strong>{formatPoints(player.stack)}</strong>
+              </span>
+              <span className="row-actions">
+                <button disabled={pending || inactive} onClick={() => setChipPlayer(player)}>
+                  <Icon name="chip" size={15} /> 调整
+                </button>
+                {inactive ? (
+                  <button
+                    disabled={pending}
+                    onClick={() =>
+                      void mutate(
+                        `/api/admin/rooms/${room.id}/players/${player.playerId}/restore`,
+                        {},
+                      )
+                    }
+                  >
+                    <Icon name="refresh" size={15} /> 恢复
+                  </button>
+                ) : (
+                  <button
+                    className="danger-link"
+                    disabled={pending}
+                    onClick={() => {
+                      if (window.confirm(`确定把 ${player.nickname} 移出房间？`))
+                        void mutate(`/api/admin/rooms/${room.id}/players/${player.playerId}/kick`, {
+                          reason: '管理员从控制台移出',
+                        });
+                    }}
+                  >
+                    <Icon name="door" size={15} /> 踢出
+                  </button>
+                )}
+              </span>
+            </article>
+          );
+        })}
+        {players.length === 0 && <div className="empty-state">这个房间还没有账号成员。</div>}
+      </div>
+      {chipPlayer && (
+        <ChipDialog
+          player={chipPlayer}
+          onClose={() => setChipPlayer(null)}
+          onSubmit={async (stack, reason) => {
+            if (
+              await mutate(`/api/admin/rooms/${room.id}/players/${chipPlayer.playerId}/chips`, {
+                stack,
+                targetStack: stack,
+                reason,
+              })
+            )
+              setChipPlayer(null);
+          }}
+        />
+      )}
+    </Modal>
+  );
+}
+
+function ChipDialog({
+  player,
+  onClose,
+  onSubmit,
+}: {
+  player: AdminRoomPlayerSummary;
+  onClose: () => void;
+  onSubmit: (stack: number, reason: string) => Promise<void>;
+}) {
+  const [stack, setStack] = useState(player.stack);
+  const [reason, setReason] = useState('线下筹码校准');
+  const [pending, setPending] = useState(false);
+  return (
+    <Modal title={`调整 ${player.nickname} 的筹码`} onClose={onClose}>
+      <p>这是管理员校准动作。请按桌面实体筹码总量填写，保存后会进入审计记录。</p>
+      <form
+        className="sheet-form"
+        onSubmit={(event) => {
+          event.preventDefault();
+          setPending(true);
+          void onSubmit(stack, reason.trim()).finally(() => setPending(false));
+        }}
+      >
+        <label className="field">
+          <span>调整后筹码</span>
+          <input
+            type="number"
+            min="0"
+            step="1"
+            value={stack}
+            onChange={(event) => setStack(Number(event.target.value))}
+            required
+            autoFocus
+          />
+        </label>
+        <label className="field">
+          <span>原因</span>
+          <input
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            maxLength={120}
+            required
+          />
+        </label>
+        <button
+          className="primary-button"
+          disabled={pending || stack < 0 || !Number.isInteger(stack) || !reason.trim()}
+        >
+          {pending ? '正在保存…' : `保存为 ${formatPoints(stack)}`}
+        </button>
+      </form>
+    </Modal>
+  );
+}
+
+function CreateRoomDialog({
+  onClose,
+  onCreate,
+}: {
+  onClose: () => void;
+  onCreate: (body: Record<string, unknown>) => Promise<void>;
+}) {
+  const [mode, setMode] = useState<RoomMode>('LIVE');
+  const [name, setName] = useState('周末好友桌');
+  const [smallBlind, setSmallBlind] = useState(10);
+  const [bigBlind, setBigBlind] = useState(20);
+  const [stack, setStack] = useState(2_000);
+  const [timeout, setTimeoutValue] = useState(30);
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    void onCreate({
+      name,
+      settings: {
+        mode,
+        smallBlind,
+        bigBlind,
+        startingStack: stack,
+        stackCap: stack,
+        actionTimeoutSeconds: timeout,
+        resultDisplaySeconds: 3,
+        nextHandCountdownSeconds: 5,
+        maxPlayers: 6,
+      },
+    });
+  };
+  return (
+    <Modal title="新建私密房间" onClose={onClose}>
+      <form className="sheet-form" onSubmit={submit}>
+        <div className="mode-choice">
+          {(['ONLINE', 'LIVE'] as const).map((item) => (
+            <button
+              type="button"
+              key={item}
+              className={mode === item ? 'active' : ''}
+              onClick={() => setMode(item)}
+            >
+              <b>
+                <Icon name={item === 'ONLINE' ? 'cards' : 'table'} size={23} />
+              </b>
+              <span>{item}</span>
+              <small>{item === 'ONLINE' ? '完整线上发牌' : '现场牌＋数字筹码'}</small>
+            </button>
+          ))}
+        </div>
+        <label className="field">
+          <span>房间名称</span>
+          <input
+            value={name}
+            onChange={(event) => setName(event.target.value)}
+            maxLength={48}
+            required
+          />
+        </label>
+        <div className="form-grid">
+          <label className="field">
+            <span>小盲</span>
+            <input
+              type="number"
+              min="1"
+              value={smallBlind}
+              onChange={(event) => setSmallBlind(+event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>大盲</span>
+            <input
+              type="number"
+              min={smallBlind}
+              value={bigBlind}
+              onChange={(event) => setBigBlind(+event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>起始/补充上限</span>
+            <input
+              type="number"
+              min={bigBlind * 20}
+              value={stack}
+              onChange={(event) => setStack(+event.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span>行动秒数</span>
+            <input
+              type="number"
+              min="10"
+              max="180"
+              value={timeout}
+              onChange={(event) => setTimeoutValue(+event.target.value)}
+            />
+          </label>
+        </div>
+        <p className="sheet-safety">房间第一手开始后规则锁定，模式无法切换。</p>
+        <button className="primary-button">创建并生成邀请</button>
+      </form>
+    </Modal>
+  );
+}
+
+function JoinPage({ token }: { token: string }) {
+  const [preview, setPreview] = useState<InvitePreview | null>(null);
+  const [session, setSession] = useState<UserSession | null>(null);
+  const [accepted, setAccepted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    Promise.all([
+      api<InvitePreview>(`/api/rooms/${token}/invite-preview`),
+      api<UserSession>('/api/auth/session').catch(() => null),
+    ])
+      .then(([room, user]) => {
+        setPreview(room);
+        setSession(user);
+      })
+      .catch((caught) => setError(caught instanceof Error ? caught.message : '邀请无效'));
+  }, [token]);
+  if (!preview && !error) return <Loading label="正在打开私密邀请…" />;
+  if (!preview) {
+    return (
+      <main className="state-page">
+        <ErrorBox>{error}</ErrorBox>
+        <button className="secondary-button" onClick={() => navigate('/')}>
+          返回首页
+        </button>
+      </main>
+    );
+  }
+  return (
+    <main className="invite-page real-invite">
+      <header className="invite-header page-container">
+        <Brand compact />
+        <span className="secure-pill">
+          <Icon name="lock" size={14} /> 私密邀请
+        </span>
+      </header>
+      <section className="invite-card">
+        <div className={`invite-emblem invite-emblem--${preview.mode.toLowerCase()}`}>
+          <span>
+            <Icon name={preview.mode === 'ONLINE' ? 'cards' : 'table'} size={32} />
+          </span>
+        </div>
+        <ModeBadge mode={preview.mode} />
+        <h1>{preview.name}</h1>
+        <p className="invite-subtitle">
+          当前 {preview.playerCount}/6 人 · 盲注 {preview.settings.smallBlind}/
+          {preview.settings.bigBlind} · 起始 {preview.settings.startingStack}
+        </p>
+        <div className="invite-seats">
+          {Array.from({ length: 6 }, (_, index) => preview.nicknames[index] ?? null).map(
+            (name, index) => (
+              <div key={index} className={name ? '' : 'invite-seat-empty'}>
+                <span className="mini-avatar">{name ? name.slice(0, 1) : '+'}</span>
+                <small>{name ?? '空位'}</small>
+              </div>
+            ),
+          )}
+        </div>
+        <div className="invite-rules">
+          <h2>本桌说明</h2>
+          <ul>
+            <li>
+              <span>
+                <Icon name="check" size={15} />
+              </span>
+              <p>
+                <strong>没有牌桌房主</strong>系统自动处理筹码和行动顺序。
+              </p>
+            </li>
+            <li>
+              <span>
+                <Icon name="check" size={15} />
+              </span>
+              <p>
+                <strong>{preview.mode === 'ONLINE' ? '服务端自动结算' : '现场玩家确认结果'}</strong>
+                管理员不能指定赢家。
+              </p>
+            </li>
+            <li>
+              <span>
+                <Icon name="check" size={15} />
+              </span>
+              <p>
+                <strong>仅供朋友娱乐</strong>积分不可兑换、提现或转让。
+              </p>
+            </li>
+          </ul>
+        </div>
+        {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
+        {!session ? (
+          <InviteSignIn onSignedIn={setSession} />
+        ) : session.mustChangePassword ? (
+          <div className="join-account-gate">
+            <Icon name="key" size={20} />
+            <div>
+              <strong>请先完成首次密码修改</strong>
+              <p>为了保护账号，修改临时密码后才能加入牌桌。</p>
+            </div>
+            <button className="primary-button" onClick={() => navigate('/')}>
+              去修改密码
+            </button>
+          </div>
+        ) : (
+          <form
+            className="join-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              setPending(true);
+              api<JoinResponse>(`/api/rooms/${token}/join`, {
+                method: 'POST',
+                body: JSON.stringify({}),
+              })
+                .then((joined) => navigate(`/room/${joined.roomId}`))
+                .catch((caught) => setError(caught instanceof Error ? caught.message : '加入失败'))
+                .finally(() => setPending(false));
+            }}
+          >
+            <div className="joining-as">
+              <span className="avatar">{session.displayName.slice(0, 1)}</span>
+              <span>
+                <small>将以此账号加入</small>
+                <strong>
+                  {session.displayName} · @{session.username}
+                </strong>
+              </span>
+            </div>
+            <label className="consent-row">
+              <input
+                type="checkbox"
+                checked={accepted}
+                onChange={(event) => setAccepted(event.target.checked)}
+              />
+              <span>我了解娱乐积分不具货币价值，也不支持任何形式的兑付。</span>
+            </label>
+            <button className="primary-button" disabled={!accepted || pending}>
+              {pending ? '正在加入…' : '接受邀请并进入牌桌'}
+            </button>
+          </form>
+        )}
+      </section>
+    </main>
+  );
+}
+
+function InviteSignIn({ onSignedIn }: { onSignedIn: (session: UserSession) => void }) {
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  return (
+    <form
+      className="join-form invite-signin"
+      onSubmit={(event) => {
+        event.preventDefault();
+        setPending(true);
+        api<UserSession>('/api/auth/login', {
+          method: 'POST',
+          body: JSON.stringify({ username: username.trim(), password }),
+        })
+          .then(onSignedIn)
+          .catch((caught) => setError(caught instanceof Error ? caught.message : '登录失败'))
+          .finally(() => setPending(false));
+      }}
+    >
+      <div className="signin-callout">
+        <Icon name="user" size={19} />
+        <span>
+          <strong>登录后接受邀请</strong>
+          <small>房间成员与账号绑定，不再使用临时昵称或恢复码。</small>
+        </span>
+      </div>
+      {error && <ErrorBox>{error}</ErrorBox>}
+      <label className="field">
+        <span>账号</span>
+        <input
+          value={username}
+          onChange={(event) => setUsername(event.target.value)}
+          autoComplete="username"
+          required
+        />
+      </label>
+      <label className="field">
+        <span>密码</span>
+        <input
+          type="password"
+          value={password}
+          onChange={(event) => setPassword(event.target.value)}
+          autoComplete="current-password"
+          required
+        />
+      </label>
+      <button className="primary-button" disabled={pending || !username.trim() || !password}>
+        {pending ? '正在登录…' : '登录'}
+      </button>
+    </form>
+  );
+}
+
+function RoomPage({ roomId }: { roomId: string }) {
+  const publicView = new URLSearchParams(window.location.search).get('view') === 'public';
+  const connection = useRoom(roomId, publicView);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [history, setHistory] = useState<HandHistoryItem[]>([]);
+  const [winnerForm, setWinnerForm] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const { room, me } = connection;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      const proposalDeadline = room?.liveResultProposal
+        ? room.liveResultProposal.objectedByPlayerIds.length > 0 ||
+          room.liveResultProposal.confirmedByPlayerIds.length > 0
+          ? room.liveResultProposal.disputeAt
+          : room.liveResultProposal.expiresAt
+        : null;
+      const deadline = room?.prompt?.deadlineAt ?? room?.nextHandAt ?? proposalDeadline;
+      setSeconds(
+        deadline ? Math.max(0, Math.ceil((new Date(deadline).getTime() - Date.now()) / 1_000)) : 0,
+      );
+    }, 250);
+    return () => window.clearInterval(timer);
+  }, [room?.liveResultProposal, room?.nextHandAt, room?.prompt?.deadlineAt]);
+
+  const send = async (
+    event: string,
+    payload: Record<string, unknown> = {},
+    needsTurnToken = false,
+  ) => {
+    const ok = await connection.send(event, payload, { needsTurnToken });
+    if (ok) setNotice('操作已由服务端确认');
+  };
+
+  if (connection.loading) return <Loading label="正在恢复牌桌状态…" />;
+  if (!room) {
+    return (
+      <main className="state-page">
+        <ErrorBox>{connection.error ?? '无法打开这个房间，请确认账号拥有访问权限。'}</ErrorBox>
+        <button className="secondary-button" onClick={() => navigate('/')}>
+          <Icon name="arrow-left" size={16} /> 返回我的房间
+        </button>
+      </main>
+    );
+  }
+  if (!me && !publicView) {
+    return (
+      <main className="state-page">
+        <Icon name="lock" size={32} />
+        <h1>
+          {connection.error === '你已被移出该房间' ? connection.error : '当前账号不是此房间玩家'}
+        </h1>
+        <p>
+          {connection.error === '你已被移出该房间'
+            ? '管理员已撤销你的房间成员身份。返回房间列表查看当前可用牌桌。'
+            : '请从“我的房间”进入，或使用管理员发送的邀请加入。'}
+        </p>
+        <button className="primary-button" onClick={() => navigate('/')}>
+          <Icon name="arrow-left" size={16} /> 返回我的房间
+        </button>
+      </main>
+    );
+  }
+  const enhancedRoom = room as EnhancedRoomProjection;
+  const mySeat = !me || me.seat === null ? null : enhancedRoom.seats[me.seat];
+  const isMyTurn = Boolean(me && room.prompt?.playerId === me.playerId);
+  const isLiveDealer = Boolean(me && me.seat !== null && room.liveDealerSeat === me.seat);
+  const frozen = room.status === 'DISPUTED' || room.status === 'ARCHIVED';
+  const timerProgress = room.prompt
+    ? Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds))
+    : 0;
+
+  return (
+    <main
+      className={`table-page real-table-page ${room.status === 'BETWEEN_HANDS' ? 'payout-settled' : ''}`}
+    >
+      <header className="table-header">
+        <IconButton
+          icon="arrow-left"
+          label="返回我的房间"
+          onClick={() => navigate('/')}
+          className="round-button"
+        />
+        <div className="table-title">
+          <span>
+            <i className={connection.connected ? 'connection-dot' : 'connection-dot offline'} />{' '}
+            {connection.connected ? '实时连接' : '正在重连'}
+            {publicView && ' · 公开观察'}
+          </span>
+          <strong>{room.name}</strong>
+          <small>
+            第 {room.handNumber} 手 · {statusLabel[room.status] ?? room.status}
+          </small>
+        </div>
+        <button
+          className="round-button header-history"
+          aria-label="查看牌局记录"
+          onClick={() => {
+            api<HandHistoryItem[]>(`/api/rooms/${roomId}/history`)
+              .then((items) => {
+                setHistory(items);
+                setHistoryOpen(true);
+                setPageError(null);
+              })
+              .catch((caught) =>
+                setPageError(caught instanceof Error ? caught.message : '无法载入牌局记录'),
+              );
+          }}
+        >
+          <Icon name="history" size={19} />
+          <span>记录</span>
+        </button>
+      </header>
+      <div
+        className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}
+        style={{ '--progress': timerProgress } as CSSProperties}
+        aria-live="polite"
+      >
+        <span className="turn-ring">
+          <Icon name="clock" size={17} />
+        </span>
+        <strong>{actingCopy(enhancedRoom, seconds)}</strong>
+        {room.phase && <small>{phaseLabel[room.phase] ?? room.phase}</small>}
+      </div>
+      {(connection.error || pageError || notice) && (
+        <div className="table-notice-wrap">
+          {connection.error && (
+            <ErrorBox onClose={connection.clearError}>{connection.error}</ErrorBox>
+          )}
+          {pageError && <ErrorBox onClose={() => setPageError(null)}>{pageError}</ErrorBox>}
+          {notice && (
+            <div className="success-box" onAnimationEnd={() => setNotice(null)}>
+              {notice}
+            </div>
+          )}
+        </div>
+      )}
+      <div className="table-layout real-table-layout">
+        <section className="table-column">
+          <div className="table-mode-row">
+            <ModeBadge mode={room.mode} />
+            <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
+            <span className="fair-chip">娱乐积分</span>
+          </div>
+          <PokerTable
+            room={enhancedRoom}
+            meId={me?.playerId ?? ''}
+            holeCards={me?.holeCards ?? []}
+            canClaim={Boolean(me && !frozen && !connection.busy && me.seat === null)}
+            onClaim={(seat) => void send('seat.claim', { seat })}
+          />
+          <div className="room-message">
+            <span>{room.message}</span>
+            {room.nextHandAt && <b>{seconds} 秒后进入下一阶段</b>}
+          </div>
+          <RecentActions actions={enhancedRoom.recentActions ?? []} />
+          {me && (
+            <div className="quick-actions real-quick-actions">
+              <button
+                onClick={() => void send('player.ready')}
+                disabled={frozen || connection.busy || mySeat?.ready === true}
+              >
+                <span>
+                  <Icon name="check" size={19} />
+                </span>
+                <small>{mySeat?.ready ? '已确认' : '确认下一手'}</small>
+              </button>
+              <button
+                onClick={() => void send('player.sitOut')}
+                disabled={frozen || connection.busy}
+              >
+                <span>
+                  <Icon name="pause" size={19} />
+                </span>
+                <small>下一手暂离</small>
+              </button>
+              <button
+                onClick={() => void send('stack.topUp', { targetStack: room.settings.stackCap })}
+                disabled={
+                  room.status === 'ACTIVE' ||
+                  frozen ||
+                  connection.busy ||
+                  (mySeat?.stack ?? 0) >= room.settings.stackCap
+                }
+              >
+                <span>
+                  <Icon name="chip" size={19} />
+                </span>
+                <small>补至 {formatPoints(room.settings.stackCap)}</small>
+              </button>
+            </div>
+          )}
+        </section>
+        <section className="operation-column">
+          <fieldset className="command-surface" disabled={connection.busy || frozen}>
+            {publicView || !me ? (
+              <WaitingPanel
+                icon="eye"
+                title="公开观察模式"
+                text="这里只展示公开牌桌状态，不会显示任何玩家底牌或操作按钮。"
+              />
+            ) : room.status === 'LOBBY' || room.status === 'BETWEEN_HANDS' ? (
+              <ReadyConfirmation
+                room={enhancedRoom}
+                mySeat={mySeat}
+                busy={connection.busy}
+                onReady={() => void send('player.ready')}
+              />
+            ) : room.mode === 'ONLINE' || room.prompt ? (
+              <OnlineActions
+                room={enhancedRoom}
+                heroSeat={mySeat}
+                isMyTurn={isMyTurn}
+                seconds={seconds}
+                onAction={(action, amountTo) =>
+                  void send(
+                    'hand.act',
+                    { action, ...(amountTo === undefined ? {} : { amountTo }) },
+                    true,
+                  )
+                }
+              />
+            ) : (
+              <LiveActions
+                room={room}
+                meId={me.playerId}
+                isDealer={isLiveDealer}
+                seconds={seconds}
+                onStreet={(street) => void send('live.streetDealt', { street })}
+                onObject={(proposalId) => void send('live.resultObject', { proposalId })}
+                onConfirm={(proposalId) => void send('live.resultConfirm', { proposalId })}
+                onPropose={() => setWinnerForm(true)}
+              />
+            )}
+          </fieldset>
+        </section>
+      </div>
+      {winnerForm && (
+        <LiveWinnerDialog
+          room={room}
+          onClose={() => setWinnerForm(false)}
+          onSubmit={async (winnersByPot) => {
+            if (await connection.send('live.resultPropose', { winnersByPot })) setWinnerForm(false);
+          }}
+        />
+      )}
+      {historyOpen && (
+        <HistoryDialog items={history} room={enhancedRoom} onClose={() => setHistoryOpen(false)} />
+      )}
+      {me && room.prompt && isMyTurn && (
+        <MobileActionDock
+          room={enhancedRoom}
+          heroSeat={mySeat}
+          seconds={seconds}
+          busy={connection.busy || frozen}
+          onAction={(action, amountTo) =>
+            void send('hand.act', { action, ...(amountTo === undefined ? {} : { amountTo }) }, true)
+          }
+        />
+      )}
+    </main>
+  );
+}
+
+function PokerTable({
+  room,
+  meId,
+  holeCards,
+  canClaim,
+  onClaim,
+}: {
+  room: EnhancedRoomProjection;
+  meId: string;
+  holeCards: Card[];
+  canClaim: boolean;
+  onClaim: (seat: number) => void;
+}) {
+  const totalPot = room.pots.reduce((sum, pot) => sum + pot.amount, 0);
+  const positions = positionsForRoom(room);
+  return (
+    <div className={`table-arena table-arena--${room.mode.toLowerCase()} real-table-arena`}>
+      <div className="felt-table">
+        <div className="felt-line" />
+        <div className="real-table-center">
+          <div className="pot-label">
+            <small>底池</small>
+            <strong key={totalPot} className="chip-pop">
+              {formatPoints(totalPot)}
+            </strong>
+            <span>{room.pots.length > 1 ? `${room.pots.length} 个池` : '积分'}</span>
+          </div>
+          {room.mode === 'ONLINE' ? (
+            <>
+              <div className="community-cards">
+                {room.communityCards.map((card, index) => (
+                  <PlayingCard
+                    card={card}
+                    key={`${room.handNumber}-${card}-${index}`}
+                    dealIndex={index}
+                  />
+                ))}
+                {Array.from({ length: 5 - room.communityCards.length }, (_, index) => (
+                  <span className="card-placeholder" key={index} />
+                ))}
+              </div>
+              <div className="hero-cards">
+                {holeCards.map((card) => (
+                  <PlayingCard
+                    card={card}
+                    key={`${room.handNumber}-${card}`}
+                    compact
+                    dealIndex={0}
+                  />
+                ))}
+              </div>
+            </>
+          ) : (
+            <div className="live-center">
+              <span className="live-center-icon">
+                <Icon name="table" size={27} />
+              </span>
+              <small>现场牌面为准</small>
+              <strong>
+                {room.pendingLiveStreet
+                  ? `等待确认 ${room.pendingLiveStreet}`
+                  : (room.phase ?? '等待准备')}
+              </strong>
+            </div>
+          )}
+        </div>
+      </div>
+      {room.seats.map((seat) => (
+        <Seat
+          key={seat.seat}
+          seat={seat}
+          own={seat.playerId === meId}
+          positions={positions.get(seat.seat) ?? []}
+          canClaim={canClaim}
+          onClaim={() => onClaim(seat.seat)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Seat({
+  seat,
+  own,
+  positions,
+  canClaim,
+  onClaim,
+}: {
+  seat: EnhancedSeat;
+  own: boolean;
+  positions: TablePosition[];
+  canClaim: boolean;
+  onClaim: () => void;
+}) {
+  if (!seat.playerId)
+    return (
+      <button
+        className={`table-seat table-seat--${seat.seat} table-seat--empty`}
+        onClick={onClaim}
+        disabled={!canClaim}
+      >
+        <span>
+          <Icon name="plus" size={18} />
+        </span>
+        <small>{canClaim ? '选座' : '空位'}</small>
+      </button>
+    );
+  const status = seat.folded
+    ? '已弃牌'
+    : seat.allIn
+      ? '全下'
+      : seat.isActing
+        ? '行动中'
+        : seat.sittingOut
+          ? '暂离'
+          : !seat.connected
+            ? '离线'
+            : seat.ready
+              ? '已准备'
+              : '已入座';
+  return (
+    <div
+      className={`table-seat table-seat--${seat.seat} ${own ? 'table-seat--own' : ''} ${seat.isActing ? 'table-seat--status-acting' : ''}`}
+    >
+      <div className="seat-avatar">
+        <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
+        {positions.length > 0 && <b title={positionLabel(positions)}>{positions.join('/')}</b>}
+      </div>
+      <div className="seat-copy">
+        <strong>{own ? '你' : seat.nickname}</strong>
+        <span>
+          <Icon name="chip" size={12} /> {formatPoints(seat.stack)}
+        </span>
+        <small>
+          {status}
+          {seat.committedHand ? ` · 已投 ${seat.committedHand}` : ''}
+        </small>
+      </div>
+      {seat.revealedCards && (
+        <div className="revealed-cards">
+          {seat.revealedCards.map((card) => (
+            <PlayingCard card={card} key={card} compact />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PlayingCard({
+  card,
+  compact = false,
+  dealIndex = 0,
+}: {
+  card: Card;
+  compact?: boolean;
+  dealIndex?: number;
+}) {
+  const suit = card.slice(-1).toLowerCase();
+  const rank = cardRankLabel(card);
+  const symbol: Record<string, string> = { s: '♠', h: '♥', d: '♦', c: '♣' };
+  const suitName: Record<string, string> = { s: '黑桃', h: '红桃', d: '方片', c: '梅花' };
+  return (
+    <span
+      className={`playing-card ${compact ? 'playing-card--compact' : ''} ${suit === 'h' || suit === 'd' ? 'playing-card--red' : ''}`}
+      style={{ '--deal-index': dealIndex } as CSSProperties}
+      aria-label={`${suitName[suit]} ${rank}`}
+    >
+      <b>{rank}</b>
+      <i>{symbol[suit]}</i>
+    </span>
+  );
+}
+
+function OnlineActions({
+  room,
+  heroSeat,
+  isMyTurn,
+  seconds,
+  onAction,
+}: {
+  room: EnhancedRoomProjection;
+  heroSeat: EnhancedSeat | null;
+  isMyTurn: boolean;
+  seconds: number;
+  onAction: (action: PlayerAction, amountTo?: number) => void;
+}) {
+  const prompt = room.prompt;
+  const minimum = prompt?.minRaiseTo ?? prompt?.minBetTo ?? 0;
+  const [amount, setAmount] = useState(minimum);
+  useEffect(() => setAmount(minimum), [minimum, room.serverSeq]);
+  if (room.status !== 'ACTIVE')
+    return (
+      <WaitingPanel
+        icon="check"
+        title="等待下一手"
+        text="所有在线在座玩家确认后，系统才会开始下一手。"
+      />
+    );
+  if (!isMyTurn || !prompt)
+    return (
+      <WaitingPanel
+        icon="clock"
+        title="等待其他玩家行动"
+        text={room.message ?? '牌桌状态会实时更新。'}
+      />
+    );
+  const actions = new Set(prompt.legalActions);
+  const wagerAction: PlayerAction | null = actions.has('RAISE_TO')
+    ? 'RAISE_TO'
+    : actions.has('BET_TO')
+      ? 'BET_TO'
+      : null;
+  const suggestions = betSuggestions(room, heroSeat);
+  const amountValid = Number.isInteger(amount) && amount >= minimum && amount <= prompt.maxTo;
+  return (
+    <section className="operation-panel online-panel">
+      <div className="operation-head">
+        <div>
+          <span className="eyebrow">YOUR TURN</span>
+          <h2>轮到你行动</h2>
+        </div>
+        <span
+          className="turn-timer"
+          style={
+            {
+              '--progress': `${Math.max(0, Math.min(1, seconds / room.settings.actionTimeoutSeconds)) * 100}%`,
+            } as CSSProperties
+          }
+        >
+          <i>{seconds}</i>
+          <small>秒</small>
+        </span>
+      </div>
+      <div className="call-summary">
+        <span>需要跟注</span>
+        <strong>{formatPoints(prompt.callAmount)}</strong>
+        <small>超时可过牌则自动过牌，否则弃牌</small>
+      </div>
+      {wagerAction && minimum <= prompt.maxTo && (
+        <div className="raise-control">
+          <div>
+            <label htmlFor="raise">
+              {wagerAction === 'BET_TO' ? '下注至 amountTo' : '加注至 amountTo'}
+            </label>
+            <label className="amount-input">
+              <Icon name="chip" size={15} />
+              <input
+                type="number"
+                min={minimum}
+                max={prompt.maxTo}
+                step="1"
+                value={amount}
+                onChange={(event) => setAmount(Number(event.target.value))}
+                aria-label="精确输入下注后总投入"
+              />
+            </label>
+          </div>
+          <div className="bet-suggestions">
+            {suggestions.map((suggestion) => (
+              <button
+                type="button"
+                className={amount === suggestion.amountTo ? 'active' : ''}
+                key={`${suggestion.semantic}-${suggestion.amountTo}`}
+                onClick={() => setAmount(suggestion.amountTo)}
+              >
+                <strong>{suggestion.label}</strong>
+                <small>{formatPoints(suggestion.amountTo)}</small>
+              </button>
+            ))}
+          </div>
+          <input
+            id="raise"
+            type="range"
+            min={minimum}
+            max={prompt.maxTo}
+            step={room.settings.smallBlind}
+            value={Math.min(Math.max(amount, minimum), prompt.maxTo)}
+            onChange={(event) => setAmount(+event.target.value)}
+          />
+          <div className="range-bounds">
+            <span>最小 {formatPoints(minimum)}</span>
+            <span>最大 {formatPoints(prompt.maxTo)}</span>
+          </div>
+        </div>
+      )}
+      <div className="poker-actions real-poker-actions">
+        {actions.has('FOLD') && (
+          <button className="fold-button" onClick={() => onAction('FOLD')}>
+            <Icon name="close" size={16} /> 弃牌
+          </button>
+        )}
+        {actions.has('CHECK') && (
+          <button className="call-button" onClick={() => onAction('CHECK')}>
+            <Icon name="check" size={16} /> 过牌
+          </button>
+        )}
+        {actions.has('CALL') && (
+          <button className="call-button" onClick={() => onAction('CALL')}>
+            <Icon name="chip" size={16} /> 跟注 {formatPoints(prompt.callAmount)}
+          </button>
+        )}
+        {wagerAction && (
+          <button
+            className="raise-button"
+            disabled={!amountValid}
+            onClick={() => onAction(wagerAction, amount)}
+          >
+            {wagerAction === 'BET_TO' ? '下注至' : '加注至'} {formatPoints(amount)}
+          </button>
+        )}
+        {actions.has('ALL_IN') && (
+          <button className="allin-button" onClick={() => onAction('ALL_IN')}>
+            全下 {formatPoints(prompt.maxTo)}
+          </button>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WaitingPanel({
+  icon = 'spade',
+  title,
+  text,
+}: {
+  icon?: IconName;
+  title: string;
+  text: string;
+}) {
+  return (
+    <section className="operation-panel waiting-panel-real">
+      <span className="waiting-symbol">
+        <Icon name={icon} size={27} />
+      </span>
+      <h2>{title}</h2>
+      <p>{text}</p>
+    </section>
+  );
+}
+
+function ReadyConfirmation({
+  room,
+  mySeat,
+  busy,
+  onReady,
+}: {
+  room: EnhancedRoomProjection;
+  mySeat: EnhancedSeat | null;
+  busy: boolean;
+  onReady: () => void;
+}) {
+  const eligible = room.seats.filter(
+    (seat) => seat.playerId && seat.connected && !seat.sittingOut && seat.stack > 0,
+  );
+  const ready = room.readyCount ?? eligible.filter((seat) => seat.ready).length;
+  const required = room.requiredReadyCount ?? eligible.length;
+  const waiting = eligible.filter((seat) => !seat.ready);
+  return (
+    <section className="operation-panel ready-panel">
+      <div className="ready-head">
+        <span className="ready-icon">
+          <Icon name="check" size={22} />
+        </span>
+        <div>
+          <span className="eyebrow">EVERY HAND · UNANIMOUS</span>
+          <h2>确认开始下一手</h2>
+        </div>
+        <strong>
+          {ready}
+          <small> / {required}</small>
+        </strong>
+      </div>
+      <div className="ready-progress">
+        <i style={{ width: `${required ? (ready / required) * 100 : 0}%` }} />
+      </div>
+      <ul className="ready-list">
+        {eligible.map((seat) => (
+          <li key={seat.playerId} className={seat.ready ? 'confirmed' : ''}>
+            <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
+            <span>
+              <strong>{seat.nickname}</strong>
+              <small>{seat.ready ? '已确认' : '等待确认'}</small>
+            </span>
+            <Icon name={seat.ready ? 'check' : 'clock'} size={17} />
+          </li>
+        ))}
+      </ul>
+      {waiting.length > 0 && (
+        <p className="waiting-names">还差 {waiting.map((seat) => seat.nickname).join('、')} 确认</p>
+      )}
+      {mySeat ? (
+        <button
+          className="primary-button ready-button"
+          disabled={
+            busy || mySeat.ready || !eligible.some((seat) => seat.playerId === mySeat.playerId)
+          }
+          onClick={onReady}
+        >
+          <Icon name="check" size={18} />{' '}
+          {mySeat.ready ? '你已确认，等待其他人' : '我已就绪，确认下一手'}
+        </button>
+      ) : (
+        <p className="sheet-safety">先在牌桌选择空座，才能参与下一手确认。</p>
+      )}
+    </section>
+  );
+}
+
+function RecentActions({ actions }: { actions: TableActionItem[] }) {
+  if (!actions.length) return null;
+  return (
+    <section className="recent-actions" aria-label="本手最近行动">
+      <header>
+        <span>
+          <Icon name="history" size={14} /> 本手最近行动
+        </span>
+        <small>最新在上</small>
+      </header>
+      {[...actions]
+        .slice(-4)
+        .reverse()
+        .map((action) => (
+          <p key={`${action.seq}-${action.playerId ?? 'table'}`}>
+            <i>{phaseLabel[action.street] ?? action.street}</i>
+            <span>{naturalAction(action)}</span>
+          </p>
+        ))}
+    </section>
+  );
+}
+
+function MobileActionDock({
+  room,
+  heroSeat,
+  seconds,
+  busy,
+  onAction,
+}: {
+  room: EnhancedRoomProjection;
+  heroSeat: EnhancedSeat | null;
+  seconds: number;
+  busy: boolean;
+  onAction: (action: PlayerAction, amountTo?: number) => void;
+}) {
+  const prompt = room.prompt!;
+  const actions = new Set(prompt.legalActions);
+  const wagerAction: PlayerAction | null = actions.has('RAISE_TO')
+    ? 'RAISE_TO'
+    : actions.has('BET_TO')
+      ? 'BET_TO'
+      : null;
+  const minimum = prompt.minRaiseTo ?? prompt.minBetTo ?? 0;
+  const [raiseOpen, setRaiseOpen] = useState(false);
+  const [amount, setAmount] = useState(minimum);
+  useEffect(() => setAmount(minimum), [minimum, room.serverSeq]);
+  const valid = Number.isInteger(amount) && amount >= minimum && amount <= prompt.maxTo;
+  return (
+    <>
+      <div className="mobile-action-dock" aria-label="行动操作区">
+        <div className="mobile-turn-copy">
+          <span>轮到你 · {seconds} 秒</span>
+          <small>
+            {prompt.callAmount > 0 ? `跟注 ${formatPoints(prompt.callAmount)}` : '可过牌'}
+          </small>
+        </div>
+        <div className="mobile-action-buttons">
+          {actions.has('FOLD') && (
+            <button disabled={busy} className="fold-button" onClick={() => onAction('FOLD')}>
+              <Icon name="close" size={17} />
+              弃牌
+            </button>
+          )}
+          {actions.has('CHECK') && (
+            <button
+              disabled={busy}
+              className="call-button primary-action"
+              onClick={() => onAction('CHECK')}
+            >
+              <Icon name="check" size={17} />
+              过牌
+            </button>
+          )}
+          {actions.has('CALL') && (
+            <button
+              disabled={busy}
+              className="call-button primary-action"
+              onClick={() => onAction('CALL')}
+            >
+              <Icon name="chip" size={17} />
+              跟注 {formatPoints(prompt.callAmount)}
+            </button>
+          )}
+          {wagerAction && (
+            <button disabled={busy} className="raise-button" onClick={() => setRaiseOpen(true)}>
+              加注
+            </button>
+          )}
+        </div>
+      </div>
+      {raiseOpen && wagerAction && (
+        <Modal
+          title={wagerAction === 'BET_TO' ? '下注至 amountTo' : '加注至 amountTo'}
+          onClose={() => setRaiseOpen(false)}
+        >
+          <div className="mobile-wager-sheet">
+            <label className="amount-input">
+              <Icon name="chip" size={18} />
+              <input
+                type="number"
+                min={minimum}
+                max={prompt.maxTo}
+                step="1"
+                value={amount}
+                onChange={(event) => setAmount(Number(event.target.value))}
+                aria-label="精确输入下注后总投入"
+              />
+            </label>
+            <div className="bet-suggestions">
+              {betSuggestions(room, heroSeat).map((suggestion) => (
+                <button
+                  type="button"
+                  className={amount === suggestion.amountTo ? 'active' : ''}
+                  key={`${suggestion.semantic}-${suggestion.amountTo}`}
+                  onClick={() => setAmount(suggestion.amountTo)}
+                >
+                  <strong>{suggestion.label}</strong>
+                  <small>{formatPoints(suggestion.amountTo)}</small>
+                </button>
+              ))}
+            </div>
+            <input
+              type="range"
+              min={minimum}
+              max={prompt.maxTo}
+              step={room.settings.smallBlind}
+              value={Math.min(Math.max(amount, minimum), prompt.maxTo)}
+              onChange={(event) => setAmount(Number(event.target.value))}
+            />
+            <div className="range-bounds">
+              <span>最小 {formatPoints(minimum)}</span>
+              <span>最大 {formatPoints(prompt.maxTo)}</span>
+            </div>
+            <button
+              className="primary-button"
+              disabled={!valid || busy}
+              onClick={() => {
+                onAction(wagerAction, amount);
+                setRaiseOpen(false);
+              }}
+            >
+              {wagerAction === 'BET_TO' ? '下注至' : '加注至'} {formatPoints(amount)}
+            </button>
+            {actions.has('ALL_IN') && (
+              <button
+                className="secondary-button"
+                disabled={busy}
+                onClick={() => {
+                  onAction('ALL_IN');
+                  setRaiseOpen(false);
+                }}
+              >
+                全下 {formatPoints(prompt.maxTo)}
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function LiveActions({
+  room,
+  meId,
+  isDealer,
+  seconds,
+  onStreet,
+  onObject,
+  onConfirm,
+  onPropose,
+}: {
+  room: PublicRoomProjection;
+  meId: string;
+  isDealer: boolean;
+  seconds: number;
+  onStreet: (street: 'FLOP' | 'TURN' | 'RIVER') => void;
+  onObject: (proposalId: string) => void;
+  onConfirm: (proposalId: string) => void;
+  onPropose: () => void;
+}) {
+  const proposal = room.liveResultProposal;
+  const eligible = room.pots.some((pot) => pot.eligiblePlayerIds.includes(meId));
+  const objected = (proposal?.objectedByPlayerIds.length ?? 0) > 0;
+  const confirmationRound = !objected && (proposal?.confirmedByPlayerIds.length ?? 0) > 0;
+  if (room.status === 'DISPUTED') {
+    return (
+      <WaitingPanel
+        title="争议牌局已冻结"
+        text="不能再提交或确认结果。管理员只能退回本手投入并中止房间。"
+      />
+    );
+  }
+  return (
+    <section className="operation-panel live-panel real-live-panel">
+      <div className="operation-head">
+        <div>
+          <span className="eyebrow">LIVE CONTROL</span>
+          <h2>现场操作台</h2>
+        </div>
+        <span className="phase-tag">{room.phase ?? room.status}</span>
+      </div>
+      {room.pendingLiveStreet && (
+        <article className="live-task">
+          <span>
+            <Icon name="cards" size={21} />
+          </span>
+          <div>
+            <small>下注轮已结束</small>
+            <h3>请在线下发出 {room.pendingLiveStreet}</h3>
+            <p>确认后才会启动下一轮行动计时。</p>
+          </div>
+          {isDealer ? (
+            <button className="primary-button" onClick={() => onStreet(room.pendingLiveStreet!)}>
+              已发 {room.pendingLiveStreet}
+            </button>
+          ) : (
+            <em>等待发牌确认人</em>
+          )}
+        </article>
+      )}
+      {room.phase === 'SHOWDOWN' && !proposal && (
+        <article className="live-task">
+          <span>
+            <Icon name="table" size={21} />
+          </span>
+          <div>
+            <small>摊牌</small>
+            <h3>分别提交各底池赢家</h3>
+            <p>系统只允许选择该底池仍有资格的玩家。</p>
+          </div>
+          {isDealer ? (
+            <button className="primary-button" onClick={onPropose}>
+              提交结果
+            </button>
+          ) : (
+            <em>等待发牌确认人</em>
+          )}
+        </article>
+      )}
+      {proposal && (
+        <article className="proposal-card real-proposal">
+          <div className="proposal-top">
+            <span>结果提议</span>
+            <small>
+              {objected
+                ? '已有异议'
+                : confirmationRound
+                  ? '等待全员确认'
+                  : seconds > 0
+                    ? `${seconds} 秒无异议自动结算`
+                    : '正在结算'}
+            </small>
+          </div>
+          {room.pots.map((pot) => (
+            <div className="proposal-pot" key={pot.id}>
+              <b>{pot.id === 'pot-0' ? '主池' : `边池 ${Number(pot.id.slice(4))}`}</b>
+              <span>
+                {proposal.winnersByPot[pot.id]
+                  ?.map((id) => room.seats.find((seat) => seat.playerId === id)?.nickname)
+                  .join('、')}
+              </span>
+              <em>{pot.amount}</em>
+            </div>
+          ))}
+          <div className="proposal-actions">
+            {!objected && !confirmationRound && eligible && (
+              <button className="dispute-button" onClick={() => onObject(proposal.id)}>
+                提出异议
+              </button>
+            )}
+            {confirmationRound && eligible && !proposal.confirmedByPlayerIds.includes(meId) && (
+              <button className="confirm-button" onClick={() => onConfirm(proposal.id)}>
+                确认新方案
+              </button>
+            )}
+            {objected && isDealer && (
+              <button className="primary-button" onClick={onPropose}>
+                提交新方案
+              </button>
+            )}
+          </div>
+          {confirmationRound && (
+            <p>{proposal.confirmedByPlayerIds.length} 人已确认；所有有资格玩家确认后立即结算。</p>
+          )}
+        </article>
+      )}
+      {!room.pendingLiveStreet && room.phase !== 'SHOWDOWN' && !proposal && (
+        <WaitingPanel
+          title={room.status === 'ACTIVE' ? '现场手牌进行中' : '等待玩家准备'}
+          text={room.message ?? '网站只记录筹码，实体牌面以现场为准。'}
+        />
+      )}
+    </section>
+  );
+}
+
+function LiveWinnerDialog({
+  room,
+  onClose,
+  onSubmit,
+}: {
+  room: PublicRoomProjection;
+  onClose: () => void;
+  onSubmit: (winners: Record<string, string[]>) => Promise<void>;
+}) {
+  const initial = Object.fromEntries(
+    room.pots.map((pot) => [pot.id, pot.eligiblePlayerIds.slice(0, 1)]),
+  );
+  const [winners, setWinners] = useState<Record<string, string[]>>(initial);
+  return (
+    <Modal title="提交各底池赢家" onClose={onClose}>
+      <div className="winner-pots">
+        {room.pots.map((pot) => (
+          <fieldset key={pot.id}>
+            <legend>
+              {pot.id === 'pot-0' ? '主池' : `边池 ${Number(pot.id.slice(4))}`} · {pot.amount}
+            </legend>
+            {pot.eligiblePlayerIds.map((id) => {
+              const seat = room.seats.find((item) => item.playerId === id)!;
+              const checked = winners[pot.id]?.includes(id) ?? false;
+              return (
+                <label key={id}>
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() =>
+                      setWinners((current) => ({
+                        ...current,
+                        [pot.id]: checked
+                          ? current[pot.id]!.filter((item) => item !== id)
+                          : [...(current[pot.id] ?? []), id],
+                      }))
+                    }
+                  />
+                  <span>{seat.nickname}</span>
+                </label>
+              );
+            })}
+          </fieldset>
+        ))}
+      </div>
+      <p className="sheet-safety">可勾选多名赢家以平分底池；奇数筹码按按钮位后顺时针分配。</p>
+      <button
+        className="primary-button"
+        disabled={room.pots.some((pot) => !winners[pot.id]?.length)}
+        onClick={() => void onSubmit(winners)}
+      >
+        提交并开始 10 秒异议期
+      </button>
+    </Modal>
+  );
+}
+
+function HistoryDialog({
+  items,
+  room,
+  onClose,
+}: {
+  items: HandHistoryItem[];
+  room: EnhancedRoomProjection;
+  onClose: () => void;
+}) {
+  const nameMap = useMemo(
+    () =>
+      new Map(
+        room.seats
+          .filter((seat) => seat.playerId)
+          .map((seat) => [seat.playerId!, seat.nickname ?? '玩家']),
+      ),
+    [room.seats],
+  );
+  const positionsBySeat = positionsForRoom(room);
+  const positionMap = new Map(
+    room.seats
+      .filter((seat) => seat.playerId)
+      .map((seat) => [seat.playerId!, positionsBySeat.get(seat.seat) ?? []]),
+  );
+  const streetOrder = ['PREFLOP', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN'] as const;
+  return (
+    <Modal title="最近牌局记录" onClose={onClose}>
+      <div className="history-list">
+        {items.map((hand) => {
+          const actions = historyActions(hand, nameMap, positionMap);
+          return (
+            <article key={hand.handId} className="history-hand">
+              <header>
+                <span>
+                  <strong>第 {hand.handNumber} 手</strong>
+                  <small>
+                    {new Date(hand.startedAt).toLocaleString()} ·{' '}
+                    {hand.endedAt ? '已结算' : '进行中'}
+                  </small>
+                </span>
+                <ModeBadge mode={hand.mode} />
+              </header>
+              <div className="history-streets">
+                {streetOrder.map((street) => {
+                  const streetActions = actions.filter((action) => action.street === street);
+                  if (!streetActions.length) return null;
+                  return (
+                    <section key={street}>
+                      <h3>{phaseLabel[street]}</h3>
+                      <ol>
+                        {streetActions.map((action, index) => (
+                          <li key={`${action.seq}-${index}`}>
+                            <span
+                              className={`history-action-dot history-action-dot--${action.action.toLowerCase()}`}
+                            />
+                            <span>{naturalAction(action)}</span>
+                            {action.stackAfter !== undefined && (
+                              <small>余 {formatPoints(action.stackAfter)}</small>
+                            )}
+                          </li>
+                        ))}
+                      </ol>
+                    </section>
+                  );
+                })}
+                {actions.length === 0 && <p className="empty-state">本手没有可展示的公开行动。</p>}
+              </div>
+            </article>
+          );
+        })}
+        {items.length === 0 && <p className="empty-state">还没有已记录的手牌。</p>}
+      </div>
+    </Modal>
+  );
+}
+
+function Modal({
+  title,
+  children,
+  onClose,
+  locked = false,
+}: {
+  title: string;
+  children: ReactNode;
+  onClose?: () => void;
+  locked?: boolean;
+}) {
+  return (
+    <div className="sheet-backdrop" onMouseDown={locked ? undefined : onClose}>
+      <section
+        className="bottom-sheet real-modal"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(event) => event.stopPropagation()}
+      >
+        <header>
+          <h2>{title}</h2>
+          {!locked && onClose && (
+            <button className="round-button" onClick={onClose}>
+              <Icon name="close" size={18} />
+            </button>
+          )}
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
+export default App;
