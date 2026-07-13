@@ -3,6 +3,7 @@ import type { ReactNode, SVGProps } from 'react';
 export type IconName =
   | 'arrow-left'
   | 'arrow-right'
+  | 'book'
   | 'cards'
   | 'check'
   | 'chevron'
@@ -33,6 +34,13 @@ export type IconName =
 const paths: Record<IconName, ReactNode> = {
   'arrow-left': <path d="m15 18-6-6 6-6" />,
   'arrow-right': <path d="m9 18 6-6-6-6" />,
+  book: (
+    <>
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H11a2 2 0 0 1 2 2v16a3 3 0 0 0-3-3H4V5.5Z" />
+      <path d="M20 5.5A2.5 2.5 0 0 0 17.5 3H13v18a3 3 0 0 1 3-3h4V5.5Z" />
+      <path d="M7 8h3M7 11h3M16 8h1M16 11h1" />
+    </>
+  ),
   cards: (
     <>
       <rect x="3" y="5" width="13" height="17" rx="2" />

@@ -26,6 +26,7 @@ import {
   betSuggestions,
   cardRankLabel,
   formatPoints,
+  friendlyRoomMessage,
   historyActions,
   historySettlement,
   naturalAction,
@@ -80,7 +81,7 @@ function ModeBadge({ mode }: { mode: RoomMode }) {
   return (
     <span className={`mode-badge mode-badge--${mode.toLowerCase()}`}>
       <Icon name={mode === 'ONLINE' ? 'cards' : 'table'} size={14} />
-      {mode === 'ONLINE' ? 'ONLINE · 自动发牌' : 'LIVE · 现场牌面'}
+      {mode === 'ONLINE' ? '线上 · 自动发牌' : '线下 · 实体牌面'}
     </span>
   );
 }
@@ -222,9 +223,9 @@ function HomePage() {
       <div className="page-container lobby-content">
         <section className="lobby-hero">
           <div>
-            <span className="eyebrow">MY PRIVATE TABLES</span>
+            <span className="eyebrow">今晚的牌桌</span>
             <h1>{session.displayName}，今晚坐哪桌？</h1>
-            <p>进入已获授权的好友桌，所有筹码均为不可兑换的娱乐积分。</p>
+            <p>挑一桌坐下，朋友到齐后一起确认开牌。</p>
           </div>
           <JoinCodeForm />
         </section>
@@ -262,12 +263,12 @@ function HomePage() {
             <div className="empty-state rich-empty">
               <Icon name="table" size={32} />
               <strong>还没有加入牌桌</strong>
-              <span>向管理员获取邀请链接，登录后即可加入。</span>
+              <span>找开桌的朋友要一个邀请链接，进来就能选座。</span>
             </div>
           )}
         </section>
         <button type="button" className="admin-entry" onClick={() => navigate('/admin')}>
-          <Icon name="shield" size={16} /> 管理员入口
+          <Icon name="table" size={16} /> 开桌管理
         </button>
       </div>
       {passwordOpen && (
@@ -312,7 +313,7 @@ function UserLogin({
           <i />
         </div>
         <div className="login-heading">
-          <span className="eyebrow">PRIVATE TABLES · MEMBERS ONLY</span>
+          <span className="eyebrow">朋友局 · 随时开桌</span>
           <h1>
             <span>朋友到齐，</span>
             <span>牌桌就绪。</span>
@@ -360,10 +361,10 @@ function UserLogin({
           </button>
         </form>
         <button type="button" className="text-button" onClick={() => navigate('/admin')}>
-          管理员登录
+          我来开桌
         </button>
         <p className="safety-line">
-          <Icon name="shield" size={14} /> 仅供好友娱乐 · 积分不可兑换、转让或提现
+          <Icon name="spark" size={14} /> 约上朋友，坐下就开牌
         </p>
       </section>
     </main>
@@ -523,7 +524,7 @@ function AdminPage() {
       .finally(() => setChecking(false));
   }, []);
 
-  if (checking) return <Loading label="正在验证管理员会话…" />;
+  if (checking) return <Loading label="正在进入开桌管理…" />;
   if (!session) {
     return (
       <AdminLogin
@@ -594,7 +595,7 @@ function AdminPage() {
           }}
         >
           <span>
-            <small>管理员</small>
+            <small>开桌人</small>
             <strong>{session.username}</strong>
           </span>
           <b className="admin-avatar">
@@ -605,12 +606,12 @@ function AdminPage() {
       <div className="page-container dashboard-content">
         <section className="welcome-row">
           <div>
-            <span className="eyebrow">PRIVATE CONTROL</span>
+            <span className="eyebrow">组局小助手</span>
             <h1>{tab === 'rooms' ? '牌桌管理' : '账号管理'}</h1>
             <p>
               {tab === 'rooms'
-                ? '配置好友桌成员与筹码，所有管理动作都会留下审计记录。'
-                : '为线下玩家创建独立账号，并在必要时重置首次登录密码。'}
+                ? '开桌、拉朋友入座，今晚就从这里开始。'
+                : '给朋友建个账号，之后就能直接进桌。'}
             </p>
           </div>
           <button
@@ -685,7 +686,7 @@ function AdminPage() {
                 </div>
                 <div className="room-card-actions real-admin-actions">
                   <button onClick={() => navigate(`/room/${room.id}?view=public`)}>
-                    <Icon name="eye" size={15} /> 公开牌桌
+                    <Icon name="eye" size={15} /> 旁观牌桌
                   </button>
                   <button
                     onClick={() => {
@@ -717,15 +718,13 @@ function AdminPage() {
                     )}
                   {(room.status === 'ACTIVE' || room.status === 'DISPUTED') && (
                     <button className="danger-button" onClick={() => void archive(room, true)}>
-                      退款中止
+                      退回本手并收桌
                     </button>
                   )}
                 </div>
               </article>
             ))}
-            {rooms.length === 0 && (
-              <div className="empty-state">还没有房间，先创建一个私密牌桌。</div>
-            )}
+            {rooms.length === 0 && <div className="empty-state">还没有牌桌，先开一桌等朋友。</div>}
           </section>
         ) : (
           <AccountsPanel
@@ -807,9 +806,9 @@ function AdminLogin({
       <section className="login-card">
         <Brand />
         <div className="login-heading">
-          <span className="eyebrow">ADMIN ONLY</span>
-          <h1>管理员登录</h1>
-          <p>管理员负责账号、房间成员与线下筹码校准；普通玩家请从首页登录。</p>
+          <span className="eyebrow">开桌入口</span>
+          <h1>开桌管理</h1>
+          <p>开桌的人从这里登录；其他朋友直接回首页进入牌桌。</p>
         </div>
         {error && <ErrorBox>{error}</ErrorBox>}
         <form
@@ -839,7 +838,7 @@ function AdminLogin({
             />
           </label>
           <button className="primary-button" disabled={pending || !password}>
-            {pending ? '正在登录…' : '进入管理台'}
+            {pending ? '正在登录…' : '开始组局'}
           </button>
         </form>
       </section>
@@ -917,8 +916,8 @@ function CreateAccountDialog({
     (displayName.trim().length > 0 || normalizedUsername.length <= 20);
   const passwordValid = password.length >= 12 && password.length <= 256;
   return (
-    <Modal title="创建普通玩家账号" onClose={onClose}>
-      <p>玩家首次登录后必须修改临时密码，账号可加入多个好友桌。</p>
+    <Modal title="给朋友创建账号" onClose={onClose}>
+      <p>先设置一个临时密码，朋友首次登录后可以换成自己的密码。</p>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1125,7 +1124,7 @@ function RoomPlayersDialog({
           className="secondary-button"
           onClick={() => navigate(`/room/${room.id}?view=public`)}
         >
-          <Icon name="eye" size={16} /> 查看公开牌桌
+          <Icon name="eye" size={16} /> 旁观牌桌
         </button>
         <button
           className="secondary-button"
@@ -1238,7 +1237,7 @@ function RoomPlayersDialog({
                           void mutate(
                             `/api/admin/rooms/${room.id}/players/${player.playerId}/kick`,
                             {
-                              reason: '管理员从控制台移出',
+                              reason: '开桌人移出牌桌',
                             },
                           );
                       }}
@@ -1286,7 +1285,7 @@ function ChipDialog({
   const [error, setError] = useState<string | null>(null);
   return (
     <Modal title={`调整 ${player.nickname} 的筹码`} onClose={onClose}>
-      <p>这是管理员校准动作。请按桌面实体筹码总量填写，保存后会进入审计记录。</p>
+      <p>按桌面上的实际筹码填写，保存后会马上同步到牌桌。</p>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
       <form
         className="sheet-form"
@@ -1380,7 +1379,7 @@ function CreateRoomDialog({
       .finally(() => setPending(false));
   };
   return (
-    <Modal title="新建私密房间" onClose={onClose}>
+    <Modal title="开一张新桌" onClose={onClose}>
       <form className="sheet-form" onSubmit={submit}>
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         <div className="mode-choice">
@@ -1395,7 +1394,7 @@ function CreateRoomDialog({
               <b>
                 <Icon name={item === 'ONLINE' ? 'cards' : 'table'} size={23} />
               </b>
-              <span>{item}</span>
+              <span>{item === 'ONLINE' ? '线上牌桌' : '线下牌桌'}</span>
               <small>{item === 'ONLINE' ? '完整线上发牌' : '现场牌＋数字筹码'}</small>
             </button>
           ))}
@@ -1460,7 +1459,6 @@ function CreateRoomDialog({
 function JoinPage({ token }: { token: string }) {
   const [preview, setPreview] = useState<InvitePreview | null>(null);
   const [session, setSession] = useState<UserSession | null>(null);
-  const [accepted, setAccepted] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   useEffect(() => {
@@ -1474,7 +1472,7 @@ function JoinPage({ token }: { token: string }) {
       })
       .catch((caught) => setError(caught instanceof Error ? caught.message : '邀请无效'));
   }, [token]);
-  if (!preview && !error) return <Loading label="正在打开私密邀请…" />;
+  if (!preview && !error) return <Loading label="正在打开牌桌邀请…" />;
   if (!preview) {
     return (
       <main className="state-page">
@@ -1490,7 +1488,7 @@ function JoinPage({ token }: { token: string }) {
       <header className="invite-header page-container">
         <Brand compact />
         <span className="secure-pill">
-          <Icon name="lock" size={14} /> 私密邀请
+          <Icon name="spark" size={14} /> 朋友邀请
         </span>
       </header>
       <section className="invite-card">
@@ -1516,14 +1514,14 @@ function JoinPage({ token }: { token: string }) {
           )}
         </div>
         <div className="invite-rules">
-          <h2>本桌说明</h2>
+          <h2>这桌怎么玩</h2>
           <ul>
             <li>
               <span>
                 <Icon name="check" size={15} />
               </span>
               <p>
-                <strong>没有牌桌房主</strong>系统自动处理筹码和行动顺序。
+                <strong>人齐再开牌</strong>每手开始前，桌上玩家一起点准备。
               </p>
             </li>
             <li>
@@ -1531,8 +1529,8 @@ function JoinPage({ token }: { token: string }) {
                 <Icon name="check" size={15} />
               </span>
               <p>
-                <strong>{preview.mode === 'ONLINE' ? '服务端自动结算' : '现场玩家确认结果'}</strong>
-                管理员不能指定赢家。
+                <strong>{preview.mode === 'ONLINE' ? '自动发牌和比牌' : '实体牌配数字筹码'}</strong>
+                下注顺序和底池都由网站处理。
               </p>
             </li>
             <li>
@@ -1540,7 +1538,7 @@ function JoinPage({ token }: { token: string }) {
                 <Icon name="check" size={15} />
               </span>
               <p>
-                <strong>仅供朋友娱乐</strong>积分不可兑换、提现或转让。
+                <strong>位置每手顺时针轮换</strong>轮到谁、该下多少都会清楚显示。
               </p>
             </li>
           </ul>
@@ -1583,16 +1581,8 @@ function JoinPage({ token }: { token: string }) {
                 </strong>
               </span>
             </div>
-            <label className="consent-row">
-              <input
-                type="checkbox"
-                checked={accepted}
-                onChange={(event) => setAccepted(event.target.checked)}
-              />
-              <span>我了解娱乐积分不具货币价值，也不支持任何形式的兑付。</span>
-            </label>
-            <button className="primary-button" disabled={!accepted || pending}>
-              {pending ? '正在加入…' : '接受邀请并进入牌桌'}
+            <button className="primary-button" disabled={pending}>
+              {pending ? '正在加入…' : '加入牌桌'}
             </button>
           </form>
         )}
@@ -1693,8 +1683,8 @@ function RoomPage({ roomId }: { roomId: string }) {
   ) => {
     const ok = await connection.send(event, payload, { needsTurnToken });
     if (!ok) return;
-    if (event === 'player.ready') setNotice('已确认下一手');
-    else if (event === 'player.sitOut') setNotice('已设置下一手暂离');
+    if (event === 'player.ready') setNotice('下一手已准备');
+    else if (event === 'player.sitOut') setNotice('下一手先休息');
     else if (event === 'stack.topUp') setNotice('筹码已补至房间上限');
     else if (event === 'hand.act') {
       const action = payload.action as PlayerAction | undefined;
@@ -1715,7 +1705,7 @@ function RoomPage({ roomId }: { roomId: string }) {
       setHistoryStatus('ready');
     } catch (caught) {
       setHistoryStatus('error');
-      setHistoryError(caught instanceof Error ? caught.message : '无法载入牌局记录');
+      setHistoryError(caught instanceof Error ? caught.message : '牌谱没有加载出来');
     }
   };
 
@@ -1723,7 +1713,7 @@ function RoomPage({ roomId }: { roomId: string }) {
   if (!room) {
     return (
       <main className="state-page">
-        <ErrorBox>{connection.error ?? '无法打开这个房间，请确认账号拥有访问权限。'}</ErrorBox>
+        <ErrorBox>{connection.error ?? '没能打开这张牌桌，请回到首页再试一次。'}</ErrorBox>
         <button className="secondary-button" onClick={() => navigate('/')}>
           <Icon name="arrow-left" size={16} /> 返回我的房间
         </button>
@@ -1735,12 +1725,12 @@ function RoomPage({ roomId }: { roomId: string }) {
       <main className="state-page">
         <Icon name="lock" size={32} />
         <h1>
-          {connection.error === '你已被移出该房间' ? connection.error : '当前账号不是此房间玩家'}
+          {connection.error === '你已被移出该房间' ? '你已离开这张牌桌' : '你还没加入这张牌桌'}
         </h1>
         <p>
           {connection.error === '你已被移出该房间'
-            ? '管理员已撤销你的房间成员身份。返回房间列表查看当前可用牌桌。'
-            : '请从“我的房间”进入，或使用管理员发送的邀请加入。'}
+            ? '回到首页看看其他牌桌，或让朋友再发一次邀请。'
+            : '请从“我的牌桌”进入，或让开桌的朋友发一个邀请。'}
         </p>
         <button className="primary-button" onClick={() => navigate('/')}>
           <Icon name="arrow-left" size={16} /> 返回我的房间
@@ -1783,8 +1773,8 @@ function RoomPage({ roomId }: { roomId: string }) {
         <div className="table-title">
           <span>
             <i className={connection.connected ? 'connection-dot' : 'connection-dot offline'} />{' '}
-            {connection.connected ? '实时连接' : '正在重连'}
-            {publicView && ' · 公开观察'}
+            {connection.connected ? '在线' : '重连中'}
+            {publicView && ' · 旁观中'}
           </span>
           <strong>{room.name}</strong>
           <small>
@@ -1792,16 +1782,21 @@ function RoomPage({ roomId }: { roomId: string }) {
           </small>
         </div>
         <button
-          className="round-button header-history"
-          aria-label="查看牌局记录"
+          className="table-history-trigger"
+          aria-label="查看牌谱"
           aria-busy={historyStatus === 'loading'}
           onClick={() => {
             if (historyStatus === 'loading') setHistoryOpen(true);
             else void loadHistory();
           }}
         >
-          <Icon name="history" size={19} />
-          <span>记录</span>
+          <span className="table-history-trigger__icon">
+            <Icon name="book" size={18} />
+          </span>
+          <span className="table-history-trigger__copy">
+            <small>{historyStatus === 'ready' ? `${history.length} 手` : '回看'}</small>
+            <strong>牌谱</strong>
+          </span>
         </button>
       </header>
       <div className={`acting-banner ${isMyTurn ? 'acting-banner--mine' : ''}`}>
@@ -1837,7 +1832,7 @@ function RoomPage({ roomId }: { roomId: string }) {
           <div className="table-mode-row">
             <ModeBadge mode={room.mode} />
             <span>{room.phase ? (phaseLabel[room.phase] ?? room.phase) : '等待开始'}</span>
-            <span className="fair-chip">娱乐积分</span>
+            <span className="fair-chip">数字筹码</span>
           </div>
           <PokerTable
             room={enhancedRoom}
@@ -1847,7 +1842,7 @@ function RoomPage({ roomId }: { roomId: string }) {
             onClaim={(seat) => void send('seat.claim', { seat })}
           />
           <div className="room-message">
-            <span>{room.message}</span>
+            <span>{friendlyRoomMessage(room.message)}</span>
             {room.nextHandAt && <b>{seconds} 秒后进入下一阶段</b>}
           </div>
           <RecentActions actions={enhancedRoom.recentActions ?? []} />
@@ -1860,7 +1855,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>
                   <Icon name="check" size={19} />
                 </span>
-                <small>{mySeat?.ready ? '已确认' : '确认下一手'}</small>
+                <small>{mySeat?.ready ? '已准备' : '准备下一手'}</small>
               </button>
               <button
                 onClick={() => void send('player.sitOut')}
@@ -1869,7 +1864,7 @@ function RoomPage({ roomId }: { roomId: string }) {
                 <span>
                   <Icon name="pause" size={19} />
                 </span>
-                <small>下一手暂离</small>
+                <small>下手休息</small>
               </button>
               <button
                 onClick={() => void send('stack.topUp', { targetStack: room.settings.stackCap })}
@@ -1893,8 +1888,8 @@ function RoomPage({ roomId }: { roomId: string }) {
             {publicView || !me ? (
               <WaitingPanel
                 icon="eye"
-                title="公开观察模式"
-                text="这里只展示公开牌桌状态，不会显示任何玩家底牌或操作按钮。"
+                title="正在旁观"
+                text="这里可以看牌桌进度，但不会看到任何人的底牌，也不能代替玩家操作。"
               />
             ) : room.status === 'LOBBY' || room.status === 'BETWEEN_HANDS' ? (
               <ReadyConfirmation
@@ -2168,7 +2163,7 @@ function OnlineActions({
       <WaitingPanel
         icon="clock"
         title="等待其他玩家行动"
-        text={room.message ?? '牌桌状态会实时更新。'}
+        text={friendlyRoomMessage(room.message) || '牌桌状态会实时更新。'}
       />
     );
   const actions = new Set(prompt.legalActions);
@@ -2189,7 +2184,7 @@ function OnlineActions({
     <section className="operation-panel online-panel">
       <div className="operation-head">
         <div>
-          <span className="eyebrow">YOUR TURN</span>
+          <span className="eyebrow">轮到你了</span>
           <h2>轮到你行动</h2>
         </div>
         <span className="turn-timer">
@@ -2356,8 +2351,8 @@ function ReadyConfirmation({
           <Icon name="check" size={22} />
         </span>
         <div>
-          <span className="eyebrow">EVERY HAND · UNANIMOUS</span>
-          <h2>确认开始下一手</h2>
+          <span className="eyebrow">人齐再开 · 每手确认</span>
+          <h2>准备开始下一手</h2>
         </div>
         <strong>
           {ready}
@@ -2376,14 +2371,14 @@ function ReadyConfirmation({
             <span className="mini-avatar">{seat.nickname?.slice(0, 1)}</span>
             <span>
               <strong>{seat.nickname}</strong>
-              <small>{seat.ready ? '已确认' : '等待确认'}</small>
+              <small>{seat.ready ? '已准备' : '还没准备'}</small>
             </span>
             <Icon name={seat.ready ? 'check' : 'clock'} size={17} />
           </li>
         ))}
       </ul>
       {waiting.length > 0 && (
-        <p className="waiting-names">还差 {waiting.map((seat) => seat.nickname).join('、')} 确认</p>
+        <p className="waiting-names">还等 {waiting.map((seat) => seat.nickname).join('、')} 准备</p>
       )}
       {mySeat ? (
         <button
@@ -2393,11 +2388,10 @@ function ReadyConfirmation({
           }
           onClick={onReady}
         >
-          <Icon name="check" size={18} />{' '}
-          {mySeat.ready ? '你已确认，等待其他人' : '我已就绪，确认下一手'}
+          <Icon name="check" size={18} /> {mySeat.ready ? '你准备好了，等等朋友' : '我准备好了'}
         </button>
       ) : (
-        <p className="sheet-safety">先在牌桌选择空座，才能参与下一手确认。</p>
+        <p className="sheet-safety">先在牌桌选个空位，坐下后就能一起准备。</p>
       )}
     </section>
   );
@@ -2614,17 +2608,14 @@ function LiveActions({
   const confirmationRound = !objected && (proposal?.confirmedByPlayerIds.length ?? 0) > 0;
   if (room.status === 'DISPUTED') {
     return (
-      <WaitingPanel
-        title="争议牌局已冻结"
-        text="不能再提交或确认结果。管理员只能退回本手投入并中止房间。"
-      />
+      <WaitingPanel title="这手先暂停" text="结果还没商量好，请联系开桌的朋友处理后再继续。" />
     );
   }
   return (
     <section className="operation-panel live-panel real-live-panel">
       <div className="operation-head">
         <div>
-          <span className="eyebrow">LIVE CONTROL</span>
+          <span className="eyebrow">线下牌桌</span>
           <h2>现场操作台</h2>
         </div>
         <span className="phase-tag">{room.phase ?? room.status}</span>
@@ -2717,7 +2708,7 @@ function LiveActions({
       {!room.pendingLiveStreet && room.phase !== 'SHOWDOWN' && !proposal && (
         <WaitingPanel
           title={room.status === 'ACTIVE' ? '现场手牌进行中' : '等待玩家准备'}
-          text={room.message ?? '网站只记录筹码，实体牌面以现场为准。'}
+          text={friendlyRoomMessage(room.message) || '网站记录下注和筹码，实体牌面以现场为准。'}
         />
       )}
     </section>
@@ -2833,25 +2824,29 @@ function HistoryDialog({
   const streetOrder = ['PREFLOP', 'FLOP', 'TURN', 'RIVER', 'SHOWDOWN'] as const;
   const visibleItems = items.slice(0, visibleCount);
   return (
-    <Modal title="最近牌局记录" className="history-modal" onClose={onClose}>
+    <Modal title="牌谱" className="history-modal" onClose={onClose}>
       <div className="history-intro">
-        <span>
-          <Icon name="history" size={17} /> 最近 {items.length} 手
+        <span className="history-intro__mark">
+          <Icon name="book" size={19} />
         </span>
-        <small>点击任意一手查看逐街行动与结算</small>
+        <span className="history-intro__copy">
+          <strong>牌局回放</strong>
+          <small>点开任意一手，逐街回看每次行动</small>
+        </span>
+        <b className="history-intro__count">{items.length} 手</b>
       </div>
       {status === 'loading' && (
         <div className="history-state" role="status">
           <span className="loader" />
-          <strong>正在整理牌局记录</strong>
-          <small>结算、底池和逐街行动会一起载入。</small>
+          <strong>正在整理牌谱</strong>
+          <small>赢家、底池和每次行动马上就好。</small>
         </div>
       )}
       {status === 'error' && (
         <div className="history-state history-state--error">
-          <ErrorBox>{error ?? '无法载入牌局记录'}</ErrorBox>
+          <ErrorBox>{error ?? '牌谱没有加载出来'}</ErrorBox>
           <button className="secondary-button" onClick={onRetry}>
-            <Icon name="refresh" size={16} /> 重新载入
+            <Icon name="refresh" size={16} /> 再试一次
           </button>
         </div>
       )}
@@ -2989,7 +2984,7 @@ function HistoryDialog({
                         );
                       })}
                       {actions.length === 0 && (
-                        <p className="empty-state">本手没有可展示的公开行动。</p>
+                        <p className="empty-state">这一手还没有可以回看的行动。</p>
                       )}
                     </div>
                   </div>
@@ -2999,9 +2994,13 @@ function HistoryDialog({
           })}
         {status === 'ready' && items.length === 0 && (
           <div className="history-state">
-            <Icon name="cards" size={30} />
-            <strong>还没有已结算的手牌</strong>
-            <small>完成第一手后，这里会展示赢家、底池和每次下注。</small>
+            <span className="history-empty-cards" aria-hidden="true">
+              <i />
+              <i />
+              <Icon name="spade" size={21} />
+            </span>
+            <strong>第一手还没打完</strong>
+            <small>结算后，赢家、底池和每次下注都会自动整理到这里。</small>
           </div>
         )}
       </div>

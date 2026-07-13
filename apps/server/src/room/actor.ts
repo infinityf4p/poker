@@ -1073,7 +1073,7 @@ export class RoomActor {
       player.connected = connected;
       if (this.state.status !== 'ACTIVE') {
         resetReadyConfirmations(this.state);
-        this.state.message = '在线阵容发生变化，请所有在座玩家重新确认下一手';
+        this.state.message = '桌上有人进出，大家重新点一下准备';
       } else if (!connected) {
         player.ready = false;
       }
@@ -1133,7 +1133,7 @@ export class RoomActor {
       const player = this.state.players.find((candidate) => candidate.id === playerId)!;
       resetReadyConfirmations(this.state);
       player.sittingOut = true;
-      this.state.message = '阵容发生变化，请其余玩家重新确认下一手';
+      this.state.message = '桌上阵容有变化，大家重新点一下准备';
       return {
         eventType: 'PLAYER_SITTING_OUT',
         publicPayload: { playerId, confirmationsReset: true },
@@ -1156,7 +1156,7 @@ export class RoomActor {
       const before = player.stack;
       player.stack = this.state.settings.stackCap;
       resetReadyConfirmations(this.state);
-      this.state.message = '筹码发生变化，请所有玩家重新确认下一手';
+      this.state.message = '筹码刚刚有变动，大家重新点一下准备';
       return {
         eventType: 'STACK_TOPPED_UP',
         publicPayload: { playerId, targetStack: player.stack, confirmationsReset: true },
@@ -1521,7 +1521,7 @@ export class RoomActor {
       }
       this.state.message = pending
         ? `${player.nickname} 将在本手结算后离开牌桌`
-        : `${player.nickname} 已被管理员移出牌桌，请重新确认下一手`;
+        : `${player.nickname} 已离开牌桌，大家重新点一下准备`;
       await this.commit({
         eventType: pending ? 'PLAYER_KICK_SCHEDULED' : 'PLAYER_KICKED',
         publicPayload: { playerId, pending, confirmationsReset: !pending },
@@ -1786,7 +1786,7 @@ export class RoomActor {
         hand.turnToken = null;
         hand.actionDeadlineAt = null;
         hand.liveProposal = null;
-        this.state.message = '争议超过 120 秒，房间已冻结；管理员只能退款中止';
+        this.state.message = '结果还没商量好，这一手先暂停';
         await this.commit({
           eventType: 'LIVE_RESULT_DISPUTED',
           liveProposalUpdate: { id: proposal.id, status: 'DISPUTED' },

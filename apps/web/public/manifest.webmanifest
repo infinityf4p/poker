@@ -1,7 +1,7 @@
 {
-  "name": "同桌 · Friends Table",
+  "name": "同桌 · 朋友局",
   "short_name": "同桌",
-  "description": "朋友邀请制的纯娱乐积分牌桌",
+  "description": "朋友到齐，随时开牌的线上德州牌桌",
   "lang": "zh-CN",
   "start_url": "/",
   "display": "standalone",
