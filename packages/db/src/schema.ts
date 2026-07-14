@@ -70,7 +70,7 @@ export const userAccounts = pgTable('user_accounts', {
   username: text('username').notNull().unique(),
   displayName: text('display_name').notNull(),
   passwordHash: text('password_hash'),
-  mustChangePassword: boolean('must_change_password').notNull().default(true),
+  mustChangePassword: boolean('must_change_password').notNull().default(false),
   loginEnabled: boolean('login_enabled').notNull().default(true),
   linkedAdminId: uuid('linked_admin_id')
     .unique()

@@ -373,7 +373,7 @@ export class PokerRepository {
             username,
             displayName,
             passwordHash,
-            mustChangePassword: true,
+            mustChangePassword: false,
             createdByAdminId: adminId,
           })
           .onConflictDoNothing({ target: userAccounts.username })
@@ -483,7 +483,7 @@ export class PokerRepository {
     return this.db.transaction(async (tx) => {
       const updated = await tx
         .update(userAccounts)
-        .set({ passwordHash, mustChangePassword: true, loginEnabled: true, updatedAt: new Date() })
+        .set({ passwordHash, mustChangePassword: false, loginEnabled: true, updatedAt: new Date() })
         .where(eq(userAccounts.id, userId))
         .returning({ id: userAccounts.id });
       if (updated.length === 0) return false;
@@ -886,7 +886,7 @@ export class PokerRepository {
     roomId?: string,
   ): Promise<AuthenticatedPlayer | null> {
     const user = await this.getUserBySession(token);
-    if (!user || user.mustChangePassword) return null;
+    if (!user) return null;
     if (roomId) return this.getPlayerForUser(user.id, roomId);
     const [membership] = await this.db
       .select({ roomId: players.roomId })

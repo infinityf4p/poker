@@ -72,17 +72,10 @@ async function requireUser(
   request: FastifyRequest,
   reply: FastifyReply,
   repository: PokerRepository,
-  allowPasswordChange = false,
 ): Promise<AuthenticatedUser | null> {
   const user = await repository.getUserBySession(request.cookies[USER_COOKIE]);
   if (!user) {
     await reply.code(401).send({ error: 'UNAUTHORIZED', message: '请先登录玩家账号' });
-    return null;
-  }
-  if (user.mustChangePassword && !allowPasswordChange) {
-    await reply
-      .code(403)
-      .send({ error: 'PASSWORD_CHANGE_REQUIRED', message: '请先修改管理员下发的初始密码' });
     return null;
   }
   return user;
@@ -149,12 +142,12 @@ export async function registerHttpRoutes(
   });
 
   app.get('/api/auth/session', async (request, reply) => {
-    const user = await requireUser(request, reply, repository, true);
+    const user = await requireUser(request, reply, repository);
     return user ?? undefined;
   });
 
   app.post('/api/auth/password', async (request, reply) => {
-    const user = await requireUser(request, reply, repository, true);
+    const user = await requireUser(request, reply, repository);
     if (!user) return;
     const parsed = changeUserPasswordSchema.safeParse(request.body);
     if (!parsed.success) return sendValidationError(reply, parsed.error.issues);
@@ -607,7 +600,7 @@ export async function registerHttpRoutes(
 
   /** @deprecated Prefer /api/auth/session and /api/me/rooms. */
   app.get('/api/player/session', async (request, reply) => {
-    const user = await requireUser(request, reply, repository, true);
+    const user = await requireUser(request, reply, repository);
     return user ?? undefined;
   });
 
@@ -636,10 +629,7 @@ export async function registerHttpRoutes(
       repository.getUserBySession(request.cookies[USER_COOKIE]),
       repository.getAdminBySession(request.cookies[ADMIN_COOKIE]),
     ]);
-    const player =
-      user && !user.mustChangePassword
-        ? await repository.getPlayerForUser(user.id, request.params.id)
-        : null;
+    const player = user ? await repository.getPlayerForUser(user.id, request.params.id) : null;
     if (!admin && !player) {
       return reply.code(401).send({ error: 'UNAUTHORIZED' });
     }

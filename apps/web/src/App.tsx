@@ -152,7 +152,6 @@ function HomePage() {
   const [rooms, setRooms] = useState<LobbyRoomSummary[]>([]);
   const [checking, setChecking] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [passwordOpen, setPasswordOpen] = useState(false);
   const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
 
   const loadRooms = async () => setRooms(await api<LobbyRoomSummary[]>('/api/rooms'));
@@ -160,19 +159,16 @@ function HomePage() {
     api<UserSession>('/api/auth/session')
       .then((user) => {
         setSession(user);
-        setPasswordOpen(user.mustChangePassword);
-        if (!user.mustChangePassword) {
-          return loadRooms().catch((caught) =>
-            setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
-          );
-        }
+        return loadRooms().catch((caught) =>
+          setError(caught instanceof Error ? caught.message : '牌桌列表加载失败'),
+        );
       })
       .catch(() => setSession(null))
       .finally(() => setChecking(false));
   }, []);
 
   useEffect(() => {
-    if (!session || session.mustChangePassword) return;
+    if (!session) return;
     const refresh = () => void loadRooms().catch(() => undefined);
     const interval = window.setInterval(refresh, 6_000);
     window.addEventListener('focus', refresh);
@@ -180,7 +176,7 @@ function HomePage() {
       window.clearInterval(interval);
       window.removeEventListener('focus', refresh);
     };
-  }, [session?.id, session?.mustChangePassword]);
+  }, [session?.id]);
 
   const enterRoom = async (room: LobbyRoomSummary) => {
     if (room.membership && room.membership.status !== 'KICKED') {
@@ -224,8 +220,7 @@ function HomePage() {
             });
             setSession(user);
             setError(null);
-            setPasswordOpen(user.mustChangePassword);
-            if (!user.mustChangePassword) await loadRooms();
+            await loadRooms();
           } catch (caught) {
             setError(caught instanceof Error ? caught.message : '登录失败');
           }
@@ -239,13 +234,13 @@ function HomePage() {
       <header className="lobby-header page-container">
         <Brand />
         <div className="account-actions">
-          <button type="button" className="account-pill" onClick={() => setPasswordOpen(true)}>
+          <div className="account-pill">
             <span className="avatar">{session.displayName.slice(0, 1).toUpperCase()}</span>
             <span>
               <small>@{session.username}</small>
               <strong>{session.displayName}</strong>
             </span>
-          </button>
+          </div>
           <IconButton
             icon="logout"
             label="退出登录"
@@ -314,19 +309,6 @@ function HomePage() {
           <Icon name="table" size={16} /> 管理员入口
         </button>
       </div>
-      {passwordOpen && (
-        <PasswordDialog
-          locked={session.mustChangePassword}
-          onClose={() => setPasswordOpen(false)}
-          onComplete={async (updated) => {
-            setSession(updated);
-            await loadRooms().catch((caught) =>
-              setError(caught instanceof Error ? caught.message : '密码已修改，牌桌列表加载失败'),
-            );
-            setPasswordOpen(false);
-          }}
-        />
-      )}
     </main>
   );
 }
@@ -523,85 +505,6 @@ function UserLogin({
         </button>
       </section>
     </main>
-  );
-}
-
-function PasswordDialog({
-  locked,
-  onClose,
-  onComplete,
-}: {
-  locked: boolean;
-  onClose: () => void;
-  onComplete: (session: UserSession) => Promise<void>;
-}) {
-  const [currentPassword, setCurrentPassword] = useState('');
-  const [newPassword, setNewPassword] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  return (
-    <Modal title={locked ? '设置新密码' : '修改登录密码'} onClose={onClose} locked={locked}>
-      {error && <ErrorBox>{error}</ErrorBox>}
-      <form
-        className="sheet-form"
-        onSubmit={(event) => {
-          event.preventDefault();
-          if (newPassword !== confirm) {
-            setError('两次输入的新密码不一致');
-            return;
-          }
-          setPending(true);
-          api<UserSession>('/api/auth/password', {
-            method: 'POST',
-            body: JSON.stringify({ currentPassword, newPassword }),
-          })
-            .then(onComplete)
-            .catch((caught) => setError(caught instanceof Error ? caught.message : '修改失败'))
-            .finally(() => setPending(false));
-        }}
-      >
-        <label className="field">
-          <span>当前密码</span>
-          <input
-            type="password"
-            value={currentPassword}
-            onChange={(event) => setCurrentPassword(event.target.value)}
-            autoComplete="current-password"
-            required
-            autoFocus
-          />
-        </label>
-        <label className="field">
-          <span>新密码</span>
-          <input
-            type="password"
-            minLength={12}
-            value={newPassword}
-            onChange={(event) => setNewPassword(event.target.value)}
-            autoComplete="new-password"
-            required
-          />
-        </label>
-        <label className="field">
-          <span>再次输入新密码</span>
-          <input
-            type="password"
-            minLength={12}
-            value={confirm}
-            onChange={(event) => setConfirm(event.target.value)}
-            autoComplete="new-password"
-            required
-          />
-        </label>
-        <button
-          className="primary-button"
-          disabled={pending || newPassword.length < 12 || newPassword !== confirm}
-        >
-          {pending ? '正在保存…' : '保存新密码'}
-        </button>
-      </form>
-    </Modal>
   );
 }
 
@@ -963,7 +866,6 @@ function AccountsPanel({
       <header className="data-header">
         <span>玩家账号</span>
         <span>登录状态</span>
-        <span>密码</span>
         <span />
       </header>
       {users.map((user) => (
@@ -977,9 +879,6 @@ function AccountsPanel({
           </span>
           <span className={`account-state ${user.loginEnabled ? 'active' : ''}`}>
             {user.loginEnabled ? '可登录' : '已停用'}
-          </span>
-          <span className={user.mustChangePassword ? 'password-state pending' : 'password-state'}>
-            {user.mustChangePassword ? '待首次修改' : '已设置'}
           </span>
           <button className="secondary-button compact-button" onClick={() => setResetting(user)}>
             <Icon name="key" size={15} /> 重置密码
@@ -1018,7 +917,7 @@ function CreateAccountDialog({
   const displayNameValid =
     displayName.trim().length <= 20 &&
     (displayName.trim().length > 0 || normalizedUsername.length <= 20);
-  const passwordValid = password.length >= 12 && password.length <= 256;
+  const passwordValid = password.length >= 6 && password.length <= 256;
   return (
     <Modal title="新建账号" onClose={onClose}>
       {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
@@ -1072,10 +971,10 @@ function CreateAccountDialog({
           )}
         </label>
         <label className="field">
-          <span>临时密码</span>
+          <span>密码</span>
           <input
             type="password"
-            minLength={12}
+            minLength={6}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="new-password"
@@ -1085,7 +984,7 @@ function CreateAccountDialog({
           />
           {password.length > 0 && !passwordValid && (
             <small className="field-error" role="alert">
-              临时密码至少需要 12 位。
+              {password.length < 6 ? '密码至少需要 6 位。' : '密码不能超过 256 位。'}
             </small>
           )}
         </label>
@@ -1126,18 +1025,25 @@ function ResetPasswordDialog({
         }}
       >
         <label className="field">
-          <span>新临时密码</span>
+          <span>新密码</span>
           <input
             type="password"
-            minLength={12}
+            minLength={6}
+            maxLength={256}
             value={password}
             onChange={(event) => setPassword(event.target.value)}
             autoComplete="new-password"
+            aria-invalid={password.length > 0 && password.length < 6}
             required
             autoFocus
           />
+          {password.length > 0 && password.length < 6 && (
+            <small className="field-error" role="alert">
+              密码至少需要 6 位。
+            </small>
+          )}
         </label>
-        <button className="primary-button" disabled={pending || password.length < 12}>
+        <button className="primary-button" disabled={pending || password.length < 6}>
           {pending ? '正在重置…' : '确认重置'}
         </button>
       </form>
@@ -1606,16 +1512,6 @@ function JoinPage({ token }: { token: string }) {
         {error && <ErrorBox onClose={() => setError(null)}>{error}</ErrorBox>}
         {!session ? (
           <InviteSignIn onSignedIn={setSession} />
-        ) : session.mustChangePassword ? (
-          <div className="join-account-gate">
-            <Icon name="key" size={20} />
-            <div>
-              <strong>请先修改初始密码</strong>
-            </div>
-            <button className="primary-button" onClick={() => navigate('/')}>
-              去修改密码
-            </button>
-          </div>
         ) : (
           <form
             className="join-form"

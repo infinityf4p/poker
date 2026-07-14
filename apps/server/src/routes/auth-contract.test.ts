@@ -5,23 +5,25 @@ import {
   changeUserPasswordSchema,
   createUserAccountSchema,
   joinRoomSchema,
+  resetUserPasswordSchema,
   userLoginSchema,
 } from '@poker-with-friends/protocol';
 import { describe, expect, it } from 'vitest';
 import { invalidRouteParameter, validationErrorBody } from './http.js';
 
 describe('permanent user auth contract', () => {
-  it('accepts an administrator-created account and a strong temporary password', () => {
+  it('accepts a six-character administrator-created account password', () => {
     expect(
       createUserAccountSchema.safeParse({
         username: 'table.player-1',
         displayName: 'Player 1',
-        password: 'temporary-passphrase',
+        password: 'abc123',
       }).success,
     ).toBe(true);
+    expect(resetUserPasswordSchema.safeParse({ password: 'abc123' }).success).toBe(true);
   });
 
-  it('rejects weak temporary passwords and invalid account names', () => {
+  it('rejects invalid account names with the complete validation message', () => {
     const parsed = createUserAccountSchema.safeParse({
       username: 'bad name',
       password: 'temporary-passphrase',
@@ -31,6 +33,20 @@ describe('permanent user auth contract', () => {
       expect(validationErrorBody(parsed.error.issues)).toMatchObject({
         error: 'BAD_REQUEST',
         message: '账号只能包含字母、数字、点、下划线和短横线',
+      });
+    }
+  });
+
+  it('rejects passwords shorter than six characters with a complete validation message', () => {
+    const parsed = createUserAccountSchema.safeParse({
+      username: 'player_1',
+      password: '12345',
+    });
+    expect(parsed.success).toBe(false);
+    if (!parsed.success) {
+      expect(validationErrorBody(parsed.error.issues)).toMatchObject({
+        error: 'BAD_REQUEST',
+        message: '密码至少需要 6 位',
       });
     }
   });
@@ -69,7 +85,7 @@ describe('permanent user auth contract', () => {
     expect(joinRoomSchema.parse({})).toEqual({});
   });
 
-  it('requires a different password during first-login password change', () => {
+  it('keeps optional password changes valid without affecting direct login', () => {
     const password = 'same-long-passphrase';
     expect(
       changeUserPasswordSchema.safeParse({ currentPassword: password, newPassword: password })

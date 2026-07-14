@@ -9,7 +9,7 @@ const usernameSchema = z
   .min(3)
   .max(64)
   .regex(/^[A-Za-z0-9_.-]+$/, '账号只能包含字母、数字、点、下划线和短横线');
-const userPasswordSchema = z.string().min(12).max(256);
+const userPasswordSchema = z.string().min(6, '密码至少需要 6 位').max(256, '密码不能超过 256 位');
 const nicknameSchema = z
   .string()
   .trim()

@@ -68,4 +68,17 @@ describe('product copy', () => {
       expect(userInterfaceSource).not.toContain(token);
     }
   });
+
+  it('does not expose a first-login or user password-change flow', () => {
+    for (const phrase of [
+      '临时密码',
+      '待首次修改',
+      '请先修改初始密码',
+      '去修改密码',
+      '修改登录密码',
+    ]) {
+      expect(userInterfaceSource).not.toContain(phrase);
+    }
+    expect(userInterfaceSource).not.toContain('/api/auth/password');
+  });
 });

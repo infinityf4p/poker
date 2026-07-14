@@ -3433,7 +3433,7 @@ button:active:not(:disabled) {
 .data-header,
 .account-list > article {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) 100px 130px 130px;
+  grid-template-columns: minmax(220px, 1fr) 100px 130px;
   align-items: center;
   gap: 16px;
   padding: 14px 18px;
@@ -3444,7 +3444,7 @@ button:active:not(:disabled) {
   font-size: 10px;
 }
 .account-list > article {
-  grid-template-columns: 38px minmax(150px, 1fr) 100px 130px 130px;
+  grid-template-columns: 38px minmax(150px, 1fr) 100px 130px;
   border-top: 1px solid var(--line);
 }
 .account-identity,
@@ -3457,8 +3457,7 @@ button:active:not(:disabled) {
   color: var(--quiet);
   font-size: 10px;
 }
-.account-state,
-.password-state {
+.account-state {
   justify-self: start;
   padding: 5px 8px;
   border-radius: 999px;
@@ -3470,14 +3469,6 @@ button:active:not(:disabled) {
 .account-state.active {
   background: rgba(158, 232, 195, 0.09);
   color: var(--mint);
-}
-.password-state {
-  background: rgba(158, 232, 195, 0.06);
-  color: var(--muted);
-}
-.password-state.pending {
-  background: rgba(245, 178, 94, 0.09);
-  color: var(--amber);
 }
 .compact-button {
   min-height: 36px;
@@ -3557,7 +3548,6 @@ button:active:not(:disabled) {
 .row-actions .danger-link {
   color: var(--red);
 }
-.join-account-gate,
 .signin-callout,
 .joining-as {
   display: flex;
@@ -3568,15 +3558,6 @@ button:active:not(:disabled) {
   border-radius: 14px;
   background: var(--surface-2);
 }
-.join-account-gate {
-  flex-wrap: wrap;
-  color: var(--amber);
-}
-.join-account-gate > div {
-  flex: 1;
-  min-width: 180px;
-}
-.join-account-gate p,
 .signin-callout small {
   margin-top: 3px;
   color: var(--muted);
@@ -4394,12 +4375,9 @@ button:active:not(:disabled) {
     grid-column: 3;
     grid-row: 1;
   }
-  .account-list > article .password-state {
-    grid-column: 2;
-    justify-self: start;
-  }
   .account-list > article .compact-button {
     grid-column: 3;
+    grid-row: 2;
     min-height: 42px;
   }
   .real-table-page:has(.mobile-action-dock) {

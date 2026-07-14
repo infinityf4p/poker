@@ -82,8 +82,7 @@ function collectPlayerActions(history: HandHistoryItem): ActionHistory[] {
 
 describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
   const adminPassword = 'Admin-E2E-Password!';
-  const initialPassword = 'Initial-E2E-Password!';
-  const changedPassword = 'Changed-E2E-Password!';
+  const initialPassword = 'aB3!x9';
   const runId = randomUUID().replaceAll('-', '').slice(0, 12);
   const adminUsername = `e2e_admin_${runId}`;
   const admin: HttpSession = { cookie: '' };
@@ -327,12 +326,7 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
         username: player.username,
         password: initialPassword,
       });
-      expect(login.mustChangePassword).toBe(true);
-      const changed = await request<UserSession>(player, 'POST', '/api/auth/password', {
-        currentPassword: initialPassword,
-        newPassword: changedPassword,
-      });
-      expect(changed.mustChangePassword).toBe(false);
+      expect(login.mustChangePassword).toBe(false);
       const memberships = await request<UserRoomSummary[]>(player, 'GET', '/api/me/rooms');
       expect(memberships).toEqual(
         expect.arrayContaining([
@@ -568,14 +562,11 @@ describeWithDatabase('real HTTP + Socket.IO three-player table flow', () => {
         playerId: '',
         cookie: '',
       };
-      await request<UserSession>(player, 'POST', '/api/auth/login', {
+      const login = await request<UserSession>(player, 'POST', '/api/auth/login', {
         username: player.username,
         password: initialPassword,
       });
-      await request<UserSession>(player, 'POST', '/api/auth/password', {
-        currentPassword: initialPassword,
-        newPassword: changedPassword,
-      });
+      expect(login.mustChangePassword).toBe(false);
 
       const beforeJoin = await request<LobbyRoomSummary[]>(player, 'GET', '/api/rooms');
       expect(beforeJoin.find((room) => room.roomId === liveRoomCreated.roomId)).toMatchObject({
