@@ -109,6 +109,12 @@ export interface PrivatePlayerProjection {
   seat: number | null;
   holeCards: Card[];
   turnToken?: string;
+  /**
+   * Live hole cards of players still contesting the pot, keyed by playerId.
+   * Only present while this player has folded in the current hand; folded
+   * players' own dead cards are never shared.
+   */
+  peekCards?: Record<string, Card[]>;
 }
 
 export interface RoomSnapshotEnvelope {

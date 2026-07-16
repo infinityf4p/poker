@@ -94,8 +94,10 @@ export async function buildApp(deps: BuildAppDependencies): Promise<PokerApp> {
     }
     reply.header(
       'Content-Security-Policy',
-      "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; " +
-        `connect-src 'self' ${realtimeOrigin}; font-src 'self'; object-src 'none'; frame-ancestors 'none'; ` +
+      "default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; " +
+        "img-src 'self' data:; " +
+        `connect-src 'self' ${realtimeOrigin}; font-src 'self' https://fonts.gstatic.com; ` +
+        "object-src 'none'; frame-ancestors 'none'; " +
         "base-uri 'self'; form-action 'self'",
     );
     const pathname = request.url.split('?', 1)[0];

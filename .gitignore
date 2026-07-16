@@ -11,6 +11,7 @@ outputs/
 !infra/.env.production.example
 *.log
 .DS_Store
+.claude/
 .pnpm-store/
 apps/web/public/sw.js
 apps/web/public/workbox-*.js

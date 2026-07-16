@@ -30,9 +30,7 @@ export interface TableActionItem {
   timedOut?: boolean;
 }
 
-export interface EnhancedRoomProjection extends PublicRoomProjection {
-  recentActions?: TableActionItem[];
-}
+export type EnhancedRoomProjection = PublicRoomProjection;
 
 export interface BetSuggestion {
   label: string;

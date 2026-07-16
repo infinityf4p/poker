@@ -305,6 +305,63 @@ describe('RoomActor', () => {
     expect(stolen).toMatchObject({ ok: false, code: 'CONFLICT' });
   });
 
+  it('reveals live hole cards only to folded players until the hand settles', async () => {
+    const loaded = loadedRoom('ONLINE');
+    loaded.players.push({
+      ...structuredClone(loaded.players[1]!),
+      id: '00000000-0000-4000-8000-000000000013',
+      userId: '00000000-0000-4000-8000-000000000023',
+      nickname: 'C',
+      seat: 2,
+    });
+    const repository = new FakeRepository();
+    const actor = new RoomActor(loaded, repository as unknown as PokerRepository, () => undefined);
+    for (const player of actor.state.players) await actor.setConnected(player.id, true);
+    for (const player of actor.state.players) {
+      await actor.ready(player.id, {
+        commandId: randomUUID(),
+        expectedSeq: actor.state.serverSeq,
+        payload: {},
+      });
+    }
+    expect(actor.state.status).toBe('ACTIVE');
+    const hand = actor.state.hand!;
+    for (const player of actor.state.players) {
+      expect(actor.snapshot(player.id).private?.peekCards).toBeUndefined();
+    }
+
+    const folderId = hand.betting.actorId!;
+    const result = await actor.act(folderId, {
+      commandId: randomUUID(),
+      expectedSeq: actor.state.serverSeq,
+      turnToken: hand.turnToken!,
+      payload: { action: 'FOLD' },
+    });
+    expect(result.ok).toBe(true);
+    expect(actor.state.status).toBe('ACTIVE');
+
+    const contenders = actor.state.players.filter((player) => player.id !== folderId);
+    const peek = actor.snapshot(folderId).private?.peekCards;
+    expect(peek).toBeDefined();
+    expect(Object.keys(peek!).sort()).toEqual(contenders.map((player) => player.id).sort());
+    for (const contender of contenders) {
+      expect(peek![contender.id]).toEqual(hand.holeCards[contender.id]);
+    }
+    for (const contender of contenders) {
+      expect(actor.snapshot(contender.id).private?.peekCards).toBeUndefined();
+    }
+    const publicJson = JSON.stringify(actor.snapshot(folderId).public);
+    for (const contender of contenders) {
+      for (const card of hand.holeCards[contender.id]!) {
+        expect(publicJson).not.toContain(`"${card}"`);
+      }
+    }
+
+    await finishCurrentBettingRound(actor);
+    expect(actor.state.status).toBe('BETWEEN_HANDS');
+    expect(actor.snapshot(folderId).private?.peekCards).toBeUndefined();
+  });
+
   it('rolls the actor state back when the database transaction fails', async () => {
     const { actor, repository } = await readyTable('ONLINE');
     const before = structuredClone(actor.state);

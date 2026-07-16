@@ -1,13 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
-const userInterfaceSource = [
-  new URL('./App.tsx', import.meta.url),
-  new URL('./poker-ui.ts', import.meta.url),
-  new URL('./use-room.ts', import.meta.url),
-]
-  .map((file) => readFileSync(file, 'utf8'))
-  .join('\n');
+const srcDir = fileURLToPath(new URL('.', import.meta.url));
+const userInterfaceFiles = readdirSync(srcDir, { recursive: true, withFileTypes: true })
+  .filter(
+    (entry) =>
+      entry.isFile() && /\.(tsx?|css|html)$/.test(entry.name) && !/\.test\./.test(entry.name),
+  )
+  .map((entry) => join(entry.parentPath, entry.name));
+
+const userInterfaceSource = userInterfaceFiles.map((file) => readFileSync(file, 'utf8')).join('\n');
 
 const roomStateSource = [
   new URL('../../server/src/room/actor.ts', import.meta.url),
@@ -40,11 +44,9 @@ describe('product copy', () => {
   });
 
   it('uses 牌桌 instead of 房间 in current interface copy', () => {
-    const app = readFileSync(new URL('./App.tsx', import.meta.url), 'utf8');
-    const connection = readFileSync(new URL('./use-room.ts', import.meta.url), 'utf8');
-
-    expect(app).not.toContain('房间');
-    expect(connection).not.toContain('房间');
+    for (const file of userInterfaceFiles) {
+      expect(readFileSync(file, 'utf8'), file).not.toContain('房间');
+    }
   });
 
   it('keeps room state structured instead of publishing persistent narration', () => {

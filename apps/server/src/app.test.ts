@@ -77,6 +77,12 @@ describe('HTTP security boundary', () => {
       expect(health.headers['content-security-policy']).toContain(
         "connect-src 'self' wss://poker.example.com",
       );
+      expect(health.headers['content-security-policy']).toContain(
+        "style-src 'self' https://fonts.googleapis.com",
+      );
+      expect(health.headers['content-security-policy']).toContain(
+        "font-src 'self' https://fonts.gstatic.com",
+      );
       expect(health.headers['content-security-policy']).not.toContain("'unsafe-inline'");
     } finally {
       built.io.close();

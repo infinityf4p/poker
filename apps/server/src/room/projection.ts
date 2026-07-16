@@ -1,5 +1,6 @@
 import { buildSidePots, getLegalActions, orderedSeatsAfter } from '@poker-with-friends/engine';
 import type {
+  Card,
   PlayerAction,
   PotProjection,
   PrivatePlayerProjection,
@@ -163,6 +164,29 @@ function projectSeat(state: RuntimeRoomState, seat: number): PublicSeat {
   } as PublicSeat;
 }
 
+/**
+ * Folded players may spectate the live hole cards of everyone still
+ * contesting the pot. The reveal is server-gated: the cards are only ever
+ * projected to a player whose own hand is already dead, and other folded
+ * players' (mucked) cards stay hidden.
+ */
+function buildPeekCards(
+  state: RuntimeRoomState,
+  viewerId: string,
+): Pick<PrivatePlayerProjection, 'peekCards'> {
+  const hand = state.hand;
+  if (!hand || hand.phase === 'SETTLED') return {};
+  const viewer = hand.betting.players.find((player) => player.playerId === viewerId);
+  if (!viewer?.folded) return {};
+  const peekCards: Record<string, Card[]> = {};
+  for (const contender of hand.betting.players) {
+    if (contender.playerId === viewerId || contender.folded) continue;
+    const cards = hand.holeCards[contender.playerId];
+    if (cards?.length) peekCards[contender.playerId] = [...cards];
+  }
+  return Object.keys(peekCards).length ? { peekCards } : {};
+}
+
 export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
   const hand = state.hand;
   const prompt = projectPrompt(state);
@@ -213,6 +237,7 @@ export function buildProjections(state: RuntimeRoomState): ProjectionBundle {
       seat: player.seat,
       holeCards: hand?.holeCards[player.id] ?? [],
       ...(ownsTurn ? { turnToken: hand.turnToken as string } : {}),
+      ...buildPeekCards(state, player.id),
     };
   }
   return {
